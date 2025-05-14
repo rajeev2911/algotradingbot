@@ -1,0 +1,7 @@
+2025-05-14 16:45:43,758 - INFO - setting up API-client for environment practice
+2025-05-14 16:45:43,889 - INFO - Fetching available instruments from OANDA…
+2025-05-14 16:45:43,890 - INFO - performing request https://api-fxpractice.oanda.com/v3/accounts/101-001-31711066-001/instruments
+2025-05-14 16:45:45,116 - ERROR - request https://api-fxpractice.oanda.com/v3/accounts/101-001-31711066-001/instruments failed [HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-001-31711066-001/instruments (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)')))]
+2025-05-14 20:37:47,186 - INFO - setting up API-client for environment practice
+2025-05-14 20:37:47,324 - INFO - performing request https://api-fxpractice.oanda.com/v3/accounts/101-001-31711066-001
+2025-05-14 20:37:47,454 - ERROR - request https://api-fxpractice.oanda.com/v3/accounts/101-001-31711066-001 failed [HTTPSConnectionPool(host='api-fxpractice.oanda.com', port=443): Max retries exceeded with url: /v3/accounts/101-001-31711066-001 (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1000)')))]

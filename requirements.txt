@@ -1,0 +1,24 @@
+# OANDA v20 REST-API Python wrapper
+oandapyV20==0.7.2              # Python wrapper for the OANDA REST-V20 API :contentReference[oaicite:0]{index=0}
+
+# Data manipulation and analysis
+pandas==2.2.3                  # High‑performance data structures (requires Python 3.12 wheels) :contentReference[oaicite:1]{index=1}
+
+# Numerical computing
+numpy>=1.24.0                  # Fundamental package for array‑based computing :contentReference[oaicite:2]{index=2}
+
+# OANDA v20 API wrapper
+oandapyV20==0.7.2             # Official Python client for OANDA v20 REST API :contentReference[oaicite:0]{index=0}
+
+# HTTP library required by oandapyV20
+requests>=2.32.3              # HTTP for Humans™ :contentReference[oaicite:1]{index=1}
+
+# Required by requests
+certifi>=2023.5.7             # SSL certificates bundle :contentReference[oaicite:2]{index=2}
+charset-normalizer>=3.1.0     # Encoding detection :contentReference[oaicite:3]{index=3}
+idna>=3.4                     # Internationalized Domain Names :contentReference[oaicite:4]{index=4}
+urllib3>=2.0.0                # HTTP library dependency :contentReference[oaicite:5]{index=5}
+
+# Data handling
+pandas==2.2.3                 # Dataframes & time‑series (supports Python 3.12) 
+numpy>=1.26.0                 # Numeric computing (supports Python 3.12) 
