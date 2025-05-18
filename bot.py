@@ -1,1051 +1,1078 @@
+# Enhanced Indian Stock Screener with Forex Trading
+# This script analyzes multiple Indian stocks and forex pairs to identify top performers
+
+# Core Imports
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import time
-from concurrent.futures import ThreadPoolExecutor
-import logging
-import os
-from oandapyV20 import API
-import oandapyV20.endpoints.orders as orders
-import oandapyV20.endpoints.positions as positions
-import oandapyV20.endpoints.accounts as accounts
-import oandapyV20.endpoints.pricing as pricing
-from oandapyV20.exceptions import V20Error
-import sys
+import datetime
 import yfinance as yf
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("indian_stock_algo_trader.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger()
-
-# OANDA API Configuration - Using your credentials
-class OandaConfig:
-    API_KEY = "f41d23e6f8e8a11d9db1f013b9f92b9b-d8042713fa92ee348434fbf479e3d52a"
-    ACCOUNT_ID = "101-001-31711066-001"
-    PRACTICE = True  # Set to False for live trading
-
-# Trading Configuration
-class Config:
-    # Default Indian Stock Universe - Top NSE stocks with proper NSE symbols
-    TRADABLE_INSTRUMENTS = [
-        'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK',
-        'HINDUNILVR', 'KOTAKBANK', 'BHARTIARTL', 'ITC',
-        'SBIN', 'BAJFINANCE', 'ASIANPAINT', 'LT', 'AXISBANK'
-    ]
-
-    # Execution mode ("simulation", "oanda_forex_only", "oanda_full")
-    EXECUTION_MODE = "simulation"  # We'll adjust this during initialization
-
-    # Time periods for analysis
-    LOOKBACK_PERIOD = '30d'  # For historical data
-    LOOKBACK_PERIOD_LONG = '90d'  # For longer trend analysis
-
-    # Pattern detection parameters
-    MOMENTUM_THRESHOLD = 0.02  # 2% momentum over period
-    VOLUME_THRESHOLD = 1.5     # 50% higher than average volume
-
-    SIGNAL_THRESHOLD = 2       # Minimum score for signal generation
-
-    # Trading parameters
-    SLTP_RATIO = 2.0           # Take profit to stop loss ratio
-
-    # Risk management
-    MAX_POSITION_SIZE_PCT = 0.05  # Maximum position size as % of account
-    MAX_TOTAL_RISK_PCT = 0.01     # Maximum risk per trade (1% of account)
-
-    # Scan frequency
-    SCAN_INTERVAL_MINUTES = 60
-
-    # Auto-trading settings
-    AUTO_TRADE = True         # Enable auto trading
-    MAX_OPEN_POSITIONS = 5     # Maximum number of simultaneous positions
-
-# Initialize OANDA API client
-api = API(access_token=OandaConfig.API_KEY, environment="practice" if OandaConfig.PRACTICE else "live")
-
-# FOREX pairs for Indian stocks simulation - these will be the instruments we use on OANDA
-# since OANDA doesn't directly support Indian stocks
-FOREX_PAIRS_MAPPING = {
-    'RELIANCE': 'USD_INR',
-    'TCS': 'EUR_USD',
-    'HDFCBANK': 'GBP_USD',
-    'INFY': 'USD_CAD',
-    'ICICIBANK': 'USD_JPY',
-    'HINDUNILVR': 'EUR_GBP',
-    'KOTAKBANK': 'AUD_USD',
-    'BHARTIARTL': 'USD_CHF',
-    'ITC': 'EUR_JPY',
-    'SBIN': 'GBP_JPY',
-    'BAJFINANCE': 'AUD_CAD',
-    'ASIANPAINT': 'EUR_AUD',
-    'LT': 'AUD_JPY',
-    'AXISBANK': 'NZD_USD'
-}
-
-def get_account_info():
-    """Get account details from OANDA"""
-    try:
-        r = accounts.AccountDetails(OandaConfig.ACCOUNT_ID)
-        response = api.request(r)
-        account_info = response['account']
-        return {
-            'balance': float(account_info['balance']),
-            'currency': account_info['currency'],
-            'open_positions': len(account_info.get('positions', [])),
-            'margin_available': float(account_info['marginAvailable']),
-            'margin_used': float(account_info['marginUsed']),
-            'margin_rate': float(account_info.get('marginRate', '0.05'))
-        }
-    except V20Error as e:
-        logger.error(f"Error fetching account info: {e}")
-        return None
-
-def get_open_positions():
-    """Get currently open positions"""
-    try:
-        r = positions.OpenPositions(OandaConfig.ACCOUNT_ID)
-        response = api.request(r)
-        return response['positions']
-    except V20Error as e:
-        logger.error(f"Error fetching open positions: {e}")
-        return []
-
-def create_alternative_execution_method():
-    """Create an alternative execution method since Indian stocks aren't available on OANDA"""
-    logger.info("Setting up alternative execution method for Indian stocks")
-
-    # Check if OANDA credentials are valid
-    try:
-        # Test OANDA connection
-        r = accounts.AccountSummary(OandaConfig.ACCOUNT_ID)
-        api.request(r)
-        logger.info("OANDA connection successful. Using forex pairs as proxies for Indian stocks.")
-        return "oanda_forex_only"
-    except V20Error as e:
-        logger.warning(f"OANDA connection failed: {e}. Using simulation mode.")
-        return "simulation"
-
-def simulate_order(instrument, units, is_buy, stop_loss, take_profit):
-    """Simulate order execution for stocks not available on OANDA"""
-    logger.info(f"SIMULATION: Placing order for {instrument}: {units} units, SL={stop_loss:.2f}, TP={take_profit:.2f}")
-
-    # Get current price
-    price_info = get_instrument_price(instrument)
-    if not price_info:
-        return {'success': False, 'error': f"Could not get price for {instrument}"}
-
-    # Simulate order execution
-    execution_price = price_info['ask'] if is_buy else price_info['bid']
-
-    # Generate a simulated order ID
-    order_id = f"sim_{instrument}_{int(time.time())}"
-
-    # Log the simulated order
-    with open("simulated_orders.csv", "a") as f:
-        f.write(f"{datetime.now()},{order_id},{instrument},{units},{is_buy},{execution_price},{stop_loss},{take_profit}\n")
-
-    return {
-        'success': True,
-        'order_id': order_id,
-        'units': units,
-        'instrument': instrument,
-        'is_buy': is_buy,
-        'stop_loss': stop_loss,
-        'take_profit': take_profit,
-        'execution_price': execution_price,
-        'simulated': True
-    }
-
-def get_instrument_price(symbol):
-    """Get current stock price using yfinance"""
-    try:
-        # For Indian stocks, append .NS for NSE
-        ticker = yf.Ticker(f"{symbol}.NS")
-        data = ticker.history(period="1d")
-
-        if len(data) > 0:
-            latest = data.iloc[-1]
-            # Estimate bid/ask with a small spread for the simulation
-            mid_price = latest['Close']
-            spread = mid_price * 0.001  # 0.1% spread
-
-            return {
-                'instrument': symbol,
-                'bid': mid_price - spread/2,
-                'ask': mid_price + spread/2,
-                'spread': spread,
-                'timestamp': str(datetime.now())
-            }
-        else:
-            logger.warning(f"No price data found for {symbol}")
-            return None
-    except Exception as e:
-        logger.error(f"Error fetching price for {symbol}: {e}")
-        return None
-
-def get_historical_data(symbol, period="30d", interval="1d"):
-    """Get historical stock data using yfinance"""
-    try:
-        # For Indian stocks, append .NS for NSE
-        ticker = yf.Ticker(f"{symbol}.NS")
-        df = ticker.history(period=period, interval=interval)
-
-        if df.empty:
-            logger.warning(f"No historical data returned for {symbol}")
-            return None
-
-        return df
-    except Exception as e:
-        logger.error(f"Error fetching historical data for {symbol}: {e}")
-        return None
-
-def calculate_technical_indicators(df):
-    """Calculate technical indicators for stock analysis"""
-    if df is None or len(df) < 10:
-        return None
-
-    try:
-        # Make a copy to avoid SettingWithCopyWarning
-        df = df.copy()
-
-        # Calculate moving averages
-        df['SMA_10'] = df['Close'].rolling(window=10).mean()
-        df['SMA_20'] = df['Close'].rolling(window=20).mean()
-        df['SMA_50'] = df['Close'].rolling(window=50).mean()
-
-        # Calculate RSI (Relative Strength Index)
-        delta = df['Close'].diff()
-        gain = delta.where(delta > 0, 0).fillna(0)
-        loss = -delta.where(delta < 0, 0).fillna(0)
-
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-
-        # Fix for division by zero
-        epsilon = 1e-10
-        rs = avg_gain / (avg_loss + epsilon)
-        df['RSI'] = 100 - (100 / (1 + rs))
-
-        # Calculate MACD (Moving Average Convergence Divergence)
-        df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
-        df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = df['EMA_12'] - df['EMA_26']
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-
-        # Volume indicators
-        df['Volume_SMA_5'] = df['Volume'].rolling(window=5).mean()
-        df['Volume_Ratio'] = df['Volume'] / (df['Volume_SMA_5'] + epsilon)
-
-        # Momentum indicators
-        df['Close_shifted_5'] = df['Close'].shift(5).fillna(df['Close'])
-        df['Close_shifted_10'] = df['Close'].shift(10).fillna(df['Close'])
-
-        # Calculate momentum
-        df['Momentum_5d'] = (df['Close'] / df['Close_shifted_5']) - 1
-        df['Momentum_10d'] = (df['Close'] / df['Close_shifted_10']) - 1
-
-        # Fill any remaining NaN values
-        df = df.bfill().ffill()
-
-        return df
-    except Exception as e:
-        logger.error(f"Error calculating indicators: {e}")
-        return None
-
-def identify_patterns(df):
-    """Identify stock trading patterns and generate signals"""
-    if df is None or len(df) < 20:
-        return None, "Insufficient data"
-
-    try:
-        # Make sure we have enough data points after calculations
-        if len(df) < 2:
-            return None, "Not enough data points after calculations"
-        if df.isnull().values.any():
-            df = df.bfill().ffill()
-
-        signals = {}
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
-
-        # Trend determination
-        uptrend = (latest['SMA_10'] > latest['SMA_20']) and (latest['Close'] > latest['SMA_50'])
-
-        # Momentum check
-        momentum_threshold = Config.MOMENTUM_THRESHOLD
-        strong_momentum = abs(latest['Momentum_5d']) > momentum_threshold
-
-        # Volume check
-        volume_threshold = Config.VOLUME_THRESHOLD
-        high_volume = latest['Volume_Ratio'] > volume_threshold
-
-        # MACD crossover
-        macd_crossover = (prev['MACD'] < prev['MACD_Signal']) and (latest['MACD'] > latest['MACD_Signal'])
-        macd_crossunder = (prev['MACD'] > prev['MACD_Signal']) and (latest['MACD'] < latest['MACD_Signal'])
-
-        # RSI conditions
-        oversold = latest['RSI'] < 30
-        overbought = latest['RSI'] > 70
-
-        # Calculate pattern scores
-        bullish_score = 0
-        bearish_score = 0
-
-        # Bullish conditions
-        if uptrend: bullish_score += 1
-        if strong_momentum and latest['Momentum_5d'] > 0: bullish_score += 1
-        if high_volume and latest['Close'] > prev['Close']: bullish_score += 1
-        if macd_crossover: bullish_score += 1
-        if oversold: bullish_score += 1
-
-        # Bearish conditions
-        if not uptrend: bearish_score += 1
-        if strong_momentum and latest['Momentum_5d'] < 0: bearish_score += 1
-        if high_volume and latest['Close'] < prev['Close']: bearish_score += 1
-        if overbought: bearish_score += 1
-        if macd_crossunder: bearish_score += 1
-
-        # Determine signal
-        signal = 0  # No signal
-        signal_type = "None"
-
-        if bullish_score >= Config.SIGNAL_THRESHOLD:
-            signal = 2  # Buy
-            signal_type = "Bullish"
-        elif bearish_score >= Config.SIGNAL_THRESHOLD:
-            signal = 1  # Sell
-            signal_type = "Bearish"
-
-        signals = {
-            'signal': signal,
-            'signal_type': signal_type,
-            'bullish_score': bullish_score,
-            'bearish_score': bearish_score,
-            'current_price': latest['Close'],
-            'momentum_5d': latest['Momentum_5d'],
-            'rsi': latest['RSI'],
-            'volume_ratio': latest['Volume_Ratio'],
-            'macd': latest['MACD'],
-            'uptrend': uptrend
-        }
-
-        return signals, None
-    except Exception as e:
-        logger.error(f"Error identifying patterns: {e}")
-        return None, str(e)
-
-def calculate_atr(df, period=14):
-    """Calculate Average True Range for volatility measurement"""
-    if df is None or len(df) < period:
-        return 0.02  # Default fallback (2%)
-
-    try:
-        high = df['High']
-        low = df['Low']
-        close = df['Close'].shift(1)
-
-        # Fill NaN values for first row
-        close = close.fillna(df['Close'])
-
-        tr1 = high - low
-        tr2 = abs(high - close)
-        tr3 = abs(low - close)
-
-        tr = pd.DataFrame({'tr1': tr1, 'tr2': tr2, 'tr3': tr3}).max(axis=1)
-        atr = tr.rolling(window=period).mean().iloc[-1]
-
-        return atr if not np.isnan(atr) else 0.02
-    except Exception as e:
-        logger.error(f"Error calculating ATR: {e}")
-        return 0.02
-
-def calculate_position_size(price, account_balance, max_risk_pct, atr):
-    """Calculate position size based on account risk management"""
-    try:
-        # Calculate the stop loss distance
-        stop_loss_distance = atr * 1.5
-
-        # Calculate the risk per trade
-        risk_amount = account_balance * max_risk_pct
-
-        # Calculate shares based on risk per rupee
-        shares = int(risk_amount / stop_loss_distance)
-
-        # Make sure we buy at least 1 share
-        shares = max(1, shares)
-
-        # Apply max position size constraint
-        max_shares = int(account_balance * Config.MAX_POSITION_SIZE_PCT / price)
-        shares = min(shares, max_shares)
-
-        return shares
-    except Exception as e:
-        logger.error(f"Error calculating position size: {e}")
-        return 1  # Default to 1 share if calculation fails
-
-def calculate_sl_tp(current_price, atr, is_buy):
-    """Calculate Stop Loss and Take Profit levels based on ATR"""
-    try:
-        # Use a minimum ATR value to prevent very tight stops
-        atr = max(atr, current_price * 0.01)  # At least 1% of price
-
-        if is_buy:
-            sl = current_price - atr * 1.5
-            tp = current_price + atr * Config.SLTP_RATIO * 1.5
-        else:
-            sl = current_price + atr * 1.5
-            tp = current_price - atr * Config.SLTP_RATIO * 1.5
-
-        # Round to 2 decimal places
-        sl = round(sl, 2)
-        tp = round(tp, 2)
-
-        return sl, tp
-    except Exception as e:
-        logger.error(f"Error calculating SL/TP: {e}")
-        # Provide fallback values
-        if is_buy:
-            sl = round(current_price * 0.95, 2)
-            tp = round(current_price * 1.05, 2)
-        else:
-            sl = round(current_price * 1.05, 2)
-            tp = round(current_price * 0.95, 2)
-        return sl, tp
-
-def get_available_instruments():
-    """Get list of instruments available for trading on OANDA"""
-    try:
-        r = accounts.AccountInstruments(OandaConfig.ACCOUNT_ID)
-        response = api.request(r)
-        instruments = response.get('instruments', [])
-
-        available_instruments = {}
-        for instrument in instruments:
-            name = instrument.get('name')
-            display_name = instrument.get('displayName')
-            available_instruments[name] = display_name
-
-        logger.info(f"Retrieved {len(available_instruments)} available instruments from OANDA")
-        return available_instruments
-    except V20Error as e:
-        logger.error(f"Error fetching available instruments: {e}")
-        return {}
-
-def place_order(instrument, units, is_buy, stop_loss, take_profit):
-    """Place a market order with stop loss and take profit"""
-    # Map the Indian stock to a corresponding forex pair for OANDA
-    if Config.EXECUTION_MODE == "oanda_forex_only" and instrument in FOREX_PAIRS_MAPPING:
-        oanda_instrument = FOREX_PAIRS_MAPPING[instrument]
-        logger.info(f"Mapping Indian stock {instrument} to forex pair {oanda_instrument} for OANDA trading")
-
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+
+# Configuration
+# List of top Indian stocks (NSE tickers - add '.NS' suffix for Yahoo Finance)
+indian_stocks = [
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
+    "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
+    "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS",
+    "SUNPHARMA.NS", "TATAMOTORS.NS", "BAJFINANCE.NS", "TITAN.NS", "WIPRO.NS"
+]
+
+# List of major forex pairs (using Yahoo Finance format)
+forex_pairs = [
+    "INR=X",      # USD/INR
+    "EURINR=X",   # EUR/INR
+    "GBPINR=X",   # GBP/INR
+    "JPYINR=X",   # JPY/INR
+    "EURUSD=X",   # EUR/USD
+    "GBPUSD=X",   # GBP/USD
+    "USDJPY=X",   # USD/JPY
+    "AUDUSD=X",   # AUD/USD
+    "USDCAD=X",   # USD/CAD
+    "NZDUSD=X"    # NZD/USD
+]
+
+# Analysis parameters
+end_date = datetime.date.today()
+start_date = end_date - pd.Timedelta(days=180)  # 6 months of data
+interval = "1d"  # Daily data for broader analysis
+
+# Technical indicator parameters
+sma_short = 20
+sma_long = 50
+ema_period = 20
+rsi_period = 14
+bb_period = 20
+macd_fast = 12
+macd_slow = 26
+macd_signal = 9
+
+# Download data
+def download_multiple_assets(tickers, start, end, interval="1d"):
+    """Download market data for multiple tickers (stocks or forex)"""
+    print(f"Downloading data for {len(tickers)} assets from {start} to {end}")
+
+    all_data = {}
+    for ticker in tqdm(tickers):
         try:
-            # Format the price strings for OANDA
-            stop_loss_str = f"{stop_loss:.5f}"
-            take_profit_str = f"{take_profit:.5f}"
-
-            order_data = {
-                "order": {
-                    "units": str(units if is_buy else -units),
-                    "instrument": oanda_instrument,
-                    "timeInForce": "FOK",
-                    "type": "MARKET",
-                    "positionFill": "DEFAULT",
-                    "stopLossOnFill": {
-                        "price": stop_loss_str,
-                        "timeInForce": "GTC"
-                    },
-                    "takeProfitOnFill": {
-                        "price": take_profit_str,
-                        "timeInForce": "GTC"
-                    }
-                }
-            }
-
-            logger.info(f"Placing OANDA order for {instrument} (via {oanda_instrument}): {units} units, SL={stop_loss_str}, TP={take_profit_str}")
-
-            r = orders.OrderCreate(OandaConfig.ACCOUNT_ID, data=order_data)
-            response = api.request(r)
-
-            logger.info(f"Order placed: {response}")
-
-            # Extract order ID and units
-            order_id = response.get('orderCreateTransaction', {}).get('id')
-            order_units = response.get('orderCreateTransaction', {}).get('units')
-
-            return {
-                'success': True,
-                'order_id': order_id,
-                'units': order_units,
-                'instrument': instrument,
-                'is_buy': is_buy,
-                'stop_loss': stop_loss,
-                'take_profit': take_profit,
-                'oanda_instrument': oanda_instrument,
-                'simulated': False
-            }
-        except V20Error as e:
-            logger.error(f"Error placing order for {instrument} via {oanda_instrument}: {e}")
-            return {'success': False, 'error': str(e)}
-    else:
-        # Use simulation mode if not using OANDA or if the instrument is not mapped
-        return simulate_order(instrument, units, is_buy, stop_loss, take_profit)
-
-def check_delisted_stocks():
-    """Check for and remove any delisted stocks from the universe"""
-    to_remove = []
-    for stock in Config.TRADABLE_INSTRUMENTS:
-        try:
-            # Attempt to get recent data
-            ticker = yf.Ticker(f"{stock}.NS")
-            data = ticker.history(period="5d")
-
-            if data.empty:
-                logger.warning(f"Stock {stock} appears to be delisted - removing from universe")
-                to_remove.append(stock)
+            df = yf.download(ticker, start=start, end=end, interval=interval, progress=False)
+            if len(df) > 0:
+                all_data[ticker] = df
+            else:
+                print(f"No data found for {ticker}")
         except Exception as e:
-            logger.warning(f"Error checking {stock}, possibly delisted: {e}")
-            to_remove.append(stock)
+            print(f"Error downloading {ticker}: {e}")
 
-    # Remove delisted stocks from the universe
-    for stock in to_remove:
-        if stock in Config.TRADABLE_INSTRUMENTS:
-            Config.TRADABLE_INSTRUMENTS.remove(stock)
+    print(f"Successfully downloaded data for {len(all_data)} assets")
+    return all_data
 
-    if to_remove:
-        logger.info(f"Removed {len(to_remove)} delisted stocks from universe: {to_remove}")
+# Technical indicators
+def calculate_indicators(df):
+    """Calculate various technical indicators for analysis"""
+    # Create a copy to avoid modifying the original dataframe
+    df = df.copy()
 
-def close_position(instrument):
-    """Close an open position for a stock"""
-    try:
-        # Check if we can trade this instrument via OANDA
-        if instrument in FOREX_PAIRS_MAPPING and Config.EXECUTION_MODE == "oanda_forex_only":
-            oanda_instrument = FOREX_PAIRS_MAPPING[instrument]
+    # Moving Averages
+    df['sma_short'] = df['Close'].rolling(sma_short).mean()
+    df['sma_long'] = df['Close'].rolling(sma_long).mean()
+    df['ema'] = df['Close'].ewm(span=ema_period, adjust=False).mean()
 
-            close_data = {"longUnits": "ALL", "shortUnits": "ALL"}
-            r = positions.PositionClose(OandaConfig.ACCOUNT_ID, instrument=oanda_instrument, data=close_data)
-            response = api.request(r)
+    # Bollinger Bands
+    df['bb_middle'] = df['Close'].rolling(bb_period).mean()
+    df['bb_std'] = df['Close'].rolling(bb_period).std()
+    df['bb_upper'] = df['bb_middle'] + (df['bb_std'] * 2)
+    df['bb_lower'] = df['bb_middle'] - (df['bb_std'] * 2)
 
-            logger.info(f"Position closed for {instrument} via {oanda_instrument}: {response}")
-            return {'success': True, 'response': response}
+    # RSI (Relative Strength Index)
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+    avg_gain = gain.rolling(window=rsi_period).mean()
+    avg_loss = loss.rolling(window=rsi_period).mean()
+
+    # Calculate RS and RSI
+    rs = avg_gain / avg_loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+
+    # MACD (Moving Average Convergence Divergence)
+    df['ema_fast'] = df['Close'].ewm(span=macd_fast, adjust=False).mean()
+    df['ema_slow'] = df['Close'].ewm(span=macd_slow, adjust=False).mean()
+    df['macd'] = df['ema_fast'] - df['ema_slow']
+    df['macd_signal'] = df['macd'].ewm(span=macd_signal, adjust=False).mean()
+    df['macd_histogram'] = df['macd'] - df['macd_signal']
+
+    # Calculate returns
+    df['daily_return'] = df['Close'].pct_change()
+    df['cum_return'] = (1 + df['daily_return']).cumprod() - 1
+
+    # Calculate volatility (rolling 30-day)
+    df['volatility'] = df['daily_return'].rolling(30).std() * np.sqrt(252)  # Annualized
+
+    # Initialize golden cross and death cross columns
+    df['golden_cross'] = False
+    df['death_cross'] = False
+
+    # Need at least sma_long+1 data points to calculate crosses
+    if len(df) > sma_long + 1:
+        # Process golden crosses and death crosses - one row at a time to avoid Series truth value errors
+        for i in range(sma_long + 1, len(df)):
+            curr_short = df['sma_short'].iloc[i]
+            curr_long = df['sma_long'].iloc[i]
+            prev_short = df['sma_short'].iloc[i-1]
+            prev_long = df['sma_long'].iloc[i-1]
+
+            # Golden cross: short MA crosses above long MA
+            if (not pd.isna(curr_short) and not pd.isna(curr_long) and
+                not pd.isna(prev_short) and not pd.isna(prev_long)):
+                if curr_short > curr_long and prev_short <= prev_long:
+                    df.iloc[i, df.columns.get_loc('golden_cross')] = True
+                # Death cross: short MA crosses below long MA
+                elif curr_short < curr_long and prev_short >= prev_long:
+                    df.iloc[i, df.columns.get_loc('death_cross')] = True
+
+    return df
+
+def calculate_performance_metrics(df, asset_type='stock'):
+    """Calculate performance metrics for ranking stocks or forex pairs"""
+    metrics = {}
+
+    # Filter out NaN values
+    returns = df['daily_return'].dropna()
+
+    if len(returns) > 0:
+        # Return metrics
+        metrics['total_return'] = df['cum_return'].iloc[-1] if not pd.isna(df['cum_return'].iloc[-1]) else 0
+        metrics['annualized_return'] = ((1 + metrics['total_return']) ** (252 / len(returns)) - 1) if metrics['total_return'] > -1 else -1
+
+        # Risk metrics
+        metrics['volatility'] = returns.std() * np.sqrt(252)  # Annualized volatility
+        metrics['sharpe_ratio'] = (metrics['annualized_return'] / metrics['volatility']) if metrics['volatility'] > 0 else 0
+
+        # Trend metrics - using safer evaluation
+        try:
+            # Use explicit scalar comparison with .item()
+            close_value = df['Close'].iloc[-1].item() if isinstance(df['Close'].iloc[-1], pd.Series) else df['Close'].iloc[-1]
+            sma_long_value = df['sma_long'].iloc[-1].item() if isinstance(df['sma_long'].iloc[-1], pd.Series) else df['sma_long'].iloc[-1]
+            sma_short_value = df['sma_short'].iloc[-1].item() if isinstance(df['sma_short'].iloc[-1], pd.Series) else df['sma_short'].iloc[-1]
+
+            # Now compare scalar values
+            metrics['above_sma50'] = close_value > sma_long_value if not pd.isna(sma_long_value) else False
+            metrics['above_sma20'] = close_value > sma_short_value if not pd.isna(sma_short_value) else False
+        except Exception:
+            # Fallback for any issues
+            metrics['above_sma50'] = False
+            metrics['above_sma20'] = False
+
+        # Momentum metrics
+        metrics['rsi'] = df['rsi'].iloc[-1] if not pd.isna(df['rsi'].iloc[-1]) else 50
+
+        # MACD metrics
+        metrics['macd'] = df['macd'].iloc[-1] if not pd.isna(df['macd'].iloc[-1]) else 0
+        metrics['macd_signal'] = df['macd_signal'].iloc[-1] if not pd.isna(df['macd_signal'].iloc[-1]) else 0
+        metrics['macd_histogram'] = df['macd_histogram'].iloc[-1] if not pd.isna(df['macd_histogram'].iloc[-1]) else 0
+        
+        # MACD bullish crossover (MACD line crosses above signal line)
+        if len(df) > 2:
+            curr_macd = df['macd'].iloc[-1]
+            curr_signal = df['macd_signal'].iloc[-1]
+            prev_macd = df['macd'].iloc[-2]
+            prev_signal = df['macd_signal'].iloc[-2]
+            
+            metrics['macd_bullish_cross'] = (curr_macd > curr_signal and prev_macd <= prev_signal) if not pd.isna(curr_macd) and not pd.isna(curr_signal) else False
+            metrics['macd_bearish_cross'] = (curr_macd < curr_signal and prev_macd >= prev_signal) if not pd.isna(curr_macd) and not pd.isna(curr_signal) else False
         else:
-            # Simulation mode
-            logger.info(f"SIMULATION: Closing position for {instrument}")
-            return {'success': True, 'simulated': True}
-    except V20Error as e:
-        logger.error(f"Error closing position for {instrument}: {e}")
-        return {'success': False, 'error': str(e)}
+            metrics['macd_bullish_cross'] = False
+            metrics['macd_bearish_cross'] = False
 
-def analyze_stock(symbol):
-    """Analyze a single stock and return trading opportunities"""
-    logger.info(f"Analyzing {symbol}")
+        # Recent performance (last 30 days)
+        if len(df) > 30:
+            recent_return = df['cum_return'].iloc[-1] - df['cum_return'].iloc[-30] if not pd.isna(df['cum_return'].iloc[-30]) else 0
+            metrics['recent_30d_return'] = recent_return if not pd.isna(recent_return) else 0
+        else:
+            metrics['recent_30d_return'] = 0
 
-    try:
-        # Get current market price
-        price_info = get_instrument_price(symbol)
-        if not price_info:
-            logger.warning(f"Could not get current price for {symbol}")
-            return None
+        # Technical signals - ensure safe boolean evaluation
+        try:
+            golden_cross_recent = df['golden_cross'].iloc[-min(30, len(df)):]
+            death_cross_recent = df['death_cross'].iloc[-min(30, len(df)):]
 
-        # Get historical data
-        df = get_historical_data(symbol, period="60d")
-        if df is None or len(df) < 20:
-            logger.warning(f"Insufficient historical data for {symbol}")
-            return None
+            # Use .any() or .sum() > 0 to safely evaluate Series
+            metrics['golden_cross_last_30d'] = golden_cross_recent.sum() > 0
+            metrics['death_cross_last_30d'] = death_cross_recent.sum() > 0
+        except Exception:
+            metrics['golden_cross_last_30d'] = False
+            metrics['death_cross_last_30d'] = False
 
-        # Calculate technical indicators
-        df = calculate_technical_indicators(df)
-        if df is None:
-            logger.warning(f"Failed to calculate technical indicators for {symbol}")
-            return None
+        # Forex specific metrics
+        if asset_type == 'forex':
+            if len(df) > 10:
+                # Fix for the "Series truth value is ambiguous" error
+                close_current = df['Close'].iloc[-1]
+                close_10days_ago = df['Close'].iloc[-10]
+                
+                # Ensure we're working with scalar values, not Series
+                if isinstance(close_current, pd.Series):
+                    close_current = close_current.item()
+                if isinstance(close_10days_ago, pd.Series):
+                    close_10days_ago = close_10days_ago.item()
+                
+                # Now calculate momentum with scalar values
+                if not pd.isna(close_10days_ago) and close_10days_ago != 0:
+                    metrics['momentum_10d'] = (close_current / close_10days_ago - 1)
+                else:
+                    metrics['momentum_10d'] = 0
+            else:
+                metrics['momentum_10d'] = 0
+                
+            # Volatility comparison (forex pairs can have different volatility characteristics)
+            mean_close = df['Close'].mean()
+            if isinstance(mean_close, pd.Series):
+                mean_close = mean_close.item()
+            metrics['normalized_volatility'] = metrics['volatility'] / mean_close if mean_close > 0 else 0
 
-        # Calculate ATR for volatility measurement
-        atr = calculate_atr(df)
-
-        # Identify patterns with adjusted threshold
-        signals, error = identify_patterns(df)
-
-        if error or signals is None:
-            logger.warning(f"Error analyzing {symbol}: {error}")
-            return None
-
-        # Get account info for position sizing
-        account_info = get_account_info()
-        if not account_info:
-            logger.error("Unable to retrieve account information")
-            return None
-
-        account_balance = account_info['balance']
-
-        current_price = signals['current_price']
-
-        # Calculate position size
-        position_size = calculate_position_size(
-            current_price,
-            account_balance,
-            Config.MAX_TOTAL_RISK_PCT,
-            atr
-        )
-
-        # Calculate stop loss and take profit levels
-        sl, tp = calculate_sl_tp(
-            current_price,
-            atr,
-            is_buy=(signals['signal'] == 2)
-        )
-
-        # Build result
-        result = {
-            'instrument': symbol,
-            'signal': signals['signal'],
-            'signal_type': signals['signal_type'],
-            'current_price': current_price,
-            'bid': price_info['bid'],
-            'ask': price_info['ask'],
-            'spread_pct': round((price_info['ask'] - price_info['bid']) / price_info['bid'] * 100, 2),
-            'bullish_score': signals['bullish_score'],
-            'bearish_score': signals['bearish_score'],
-            'momentum_5d': signals['momentum_5d'],
-            'rsi': signals['rsi'],
-            'volume_ratio': signals['volume_ratio'],
-            'recommended_shares': position_size,
-            'stop_loss': sl,
-            'take_profit': tp,
-            'atr': atr
+    else:
+        # Default values if not enough data
+        metrics = {
+            'total_return': 0,
+            'annualized_return': 0,
+            'volatility': 0,
+            'sharpe_ratio': 0,
+            'above_sma50': False,
+            'above_sma20': False,
+            'rsi': 50,
+            'macd': 0,
+            'macd_signal': 0,
+            'macd_histogram': 0,
+            'macd_bullish_cross': False,
+            'macd_bearish_cross': False,
+            'recent_30d_return': 0,
+            'golden_cross_last_30d': False,
+            'death_cross_last_30d': False
         }
+        
+        # Add forex specific default metrics if needed
+        if asset_type == 'forex':
+            metrics['momentum_10d'] = 0
+            metrics['normalized_volatility'] = 0
 
-        logger.info(f"Successfully analyzed {symbol}")
-        return result
-    except Exception as e:
-        logger.error(f"Error in analyze_stock for {symbol}: {e}")
-        return None
+    return metrics
 
-def screen_stocks():
-    """Screen all stocks in the universe and identify top opportunities"""
-    logger.info(f"Starting stock screening for {len(Config.TRADABLE_INSTRUMENTS)} stocks")
-
+# Screening function
+def screen_assets(all_data, asset_type='stock'):
+    """Screen assets (stocks or forex) based on technical and fundamental criteria"""
     results = []
 
-    # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        stock_analyses = list(executor.map(
-            analyze_stock,
-            Config.TRADABLE_INSTRUMENTS
-        ))
+    for ticker, df in all_data.items():
+        # Skip if not enough data
+        if len(df) < max(sma_long, bb_period, rsi_period, 30):
+            print(f"Not enough data for {ticker}, skipping...")
+            continue
 
-    # Filter out None results
-    results = [r for r in stock_analyses if r is not None]
+        # Calculate indicators
+        df_with_indicators = calculate_indicators(df)
 
-    # Separate buy and sell signals
-    buy_signals = [r for r in results if r['signal'] == 2]
-    sell_signals = [r for r in results if r['signal'] == 1]
+        # Calculate performance metrics
+        metrics = calculate_performance_metrics(df_with_indicators, asset_type)
 
-    # Sort buy signals by bullish score (descending)
-    buy_signals.sort(key=lambda x: (x['bullish_score'], x['momentum_5d']), reverse=True)
+        # Add ticker to metrics
+        metrics['ticker'] = ticker
+        metrics['asset_type'] = asset_type
+        
+        # Different name formatting for stocks vs forex
+        if asset_type == 'stock':
+            metrics['name'] = ticker.split('.')[0]
+        else:
+            # Format forex pair names nicely (e.g., USD/INR instead of INR=X)
+            if ticker.endswith('=X'):
+                if ticker == 'INR=X':
+                    metrics['name'] = 'USD/INR'
+                elif ticker.startswith('USD'):
+                    base = ticker[3:6]
+                    metrics['name'] = f'USD/{base}'
+                elif ticker.endswith('INR=X'):
+                    base = ticker[:3]
+                    metrics['name'] = f'{base}/INR'
+                else:
+                    parts = ticker.split('=')[0]
+                    if len(parts) >= 6:
+                        base = parts[:3]
+                        quote = parts[3:6]
+                        metrics['name'] = f'{base}/{quote}'
+                    else:
+                        metrics['name'] = ticker
+            else:
+                metrics['name'] = ticker
+                
+        metrics['current_price'] = df_with_indicators['Close'].iloc[-1]
+        metrics['volume'] = df_with_indicators['Volume'].iloc[-1] if 'Volume' in df_with_indicators else 0
 
-    # Sort sell signals by bearish score (descending)
-    sell_signals.sort(key=lambda x: (x['bearish_score'], -x['momentum_5d']), reverse=True)
+        # Calculate average volume (30 days)
+        if 'Volume' in df_with_indicators:
+            metrics['avg_volume_30d'] = df_with_indicators['Volume'].iloc[-min(30, len(df)):].mean() if len(df) > 0 else 0
+        else:
+            metrics['avg_volume_30d'] = 0
+
+        results.append(metrics)
+
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+
+    return results_df
+
+def score_assets(results_df, asset_type='stock'):
+    """Score assets (stocks or forex) based on multiple performance metrics"""
+    if len(results_df) == 0:
+        return pd.DataFrame()
+
+    # Work on a copy
+    df = results_df.copy()
+
+    # Initialize technical_score as float to allow fractional increments
+    df['technical_score'] = 0.0
+
+    # Return score (0–40)
+    if 'total_return' in df.columns and not df['total_return'].isna().all():
+        max_ret, min_ret = df['total_return'].max(), df['total_return'].min()
+        rng = max_ret - min_ret
+        df['return_score'] = 40 * (df['total_return'] - min_ret) / rng if rng > 0 else 20
+    else:
+        df['return_score'] = 0
+
+    # Recent performance (0–20)
+    if 'recent_30d_return' in df.columns and not df['recent_30d_return'].isna().all():
+        max_r, min_r = df['recent_30d_return'].max(), df['recent_30d_return'].min()
+        rng = max_r - min_r
+        df['recent_score'] = 20 * (df['recent_30d_return'] - min_r) / rng if rng > 0 else 10
+    else:
+        df['recent_score'] = 0
+
+    # Sharpe ratio (0–20)
+    if 'sharpe_ratio' in df.columns and not df['sharpe_ratio'].isna().all():
+        max_s, min_s = df['sharpe_ratio'].max(), df['sharpe_ratio'].min()
+        rng = max_s - min_s
+        df['sharpe_score'] = 20 * (df['sharpe_ratio'] - min_s) / rng if rng > 0 else 10
+    else:
+        df['sharpe_score'] = 0
+
+    # Technical signal increments
+    if 'above_sma20' in df.columns:
+        df.loc[df['above_sma20'].astype(bool), 'technical_score'] += 5
+    if 'above_sma50' in df.columns:
+        df.loc[df['above_sma50'].astype(bool), 'technical_score'] += 5
+    if 'golden_cross_last_30d' in df.columns:
+        df.loc[df['golden_cross_last_30d'].astype(bool), 'technical_score'] += 5
+    if 'death_cross_last_30d' in df.columns:
+        df.loc[df['death_cross_last_30d'].astype(bool), 'technical_score'] -= 5
+    if 'macd_bullish_cross' in df.columns:
+        df.loc[df['macd_bullish_cross'].astype(bool), 'technical_score'] += 5
+    if 'macd_bearish_cross' in df.columns:
+        df.loc[df['macd_bearish_cross'].astype(bool), 'technical_score'] -= 5
+
+    # Positive MACD value bonus (2.5 points)
+    if 'macd' in df.columns:
+        pos_mask = df['macd'] > 0
+        for idx in df.index[pos_mask]:
+            df.at[idx, 'technical_score'] += 2.5
+
+    # RSI scoring
+    df['rsi_score'] = 0
+    if 'rsi' in df.columns:
+        normal = (df['rsi'] >= 40) & (df['rsi'] <= 60)
+        df.loc[normal, 'rsi_score'] = 5
+        extreme = (df['rsi'] < 30) | (df['rsi'] > 70)
+        df.loc[extreme, 'rsi_score'] = -5
+        buy = (df['rsi'] >= 30) & (df['rsi'] < 40)
+        df.loc[buy, 'rsi_score'] = 10
+        sell = (df['rsi'] > 60) & (df['rsi'] <= 70)
+        df.loc[sell, 'rsi_score'] = -10
+
+    # Forex momentum scoring
+    if asset_type == 'forex' and 'momentum_10d' in df.columns:
+        max_m, min_m = df['momentum_10d'].max(), df['momentum_10d'].min()
+        rng = max_m - min_m
+        df['momentum_score'] = 10 * (df['momentum_10d'] - min_m) / rng if rng > 0 else 5
+    else:
+        df['momentum_score'] = 0
+
+    # Sum all scores
+    score_cols = ['return_score', 'recent_score', 'sharpe_score',
+                  'technical_score', 'rsi_score', 'momentum_score']
+    valid = [c for c in score_cols if c in df.columns]
+    df['total_score'] = df[valid].sum(axis=1)
+
+    # Sort descending
+    return df.sort_values('total_score', ascending=False).reset_index(drop=True)
+
+
+# Visualization function
+def plot_asset(df, ticker, asset_name, asset_type='stock'):
+    """Plot price charts with indicators for a single asset"""
+    plt.figure(figsize=(14, 12))
+    title_prefix = "Stock" if asset_type == 'stock' else "Forex Pair"
+    plt.suptitle(f"{title_prefix} Technical Analysis: {asset_name} ({ticker})", fontsize=16)
+
+    # Price and MAs
+    plt.subplot(4, 1, 1)
+    plt.plot(df.index, df['Close'], label='Close Price', linewidth=2)
+    plt.plot(df.index, df['sma_short'], label=f'SMA({sma_short})', linestyle='--')
+    plt.plot(df.index, df['sma_long'], label=f'SMA({sma_long})', linestyle='--')
+    plt.plot(df.index, df['bb_upper'], label='BB Upper', color='gray', alpha=0.3)
+    plt.plot(df.index, df['bb_lower'], label='BB Lower', color='gray', alpha=0.3)
+    plt.fill_between(df.index, df['bb_upper'], df['bb_lower'], color='gray', alpha=0.1)
+
+    # Mark golden crosses and death crosses - safely find indices
+    golden_crosses_idx = df.index[df['golden_cross'] == True]
+    death_crosses_idx = df.index[df['death_cross'] == True]
+
+    # Check if any crosses exist before plotting
+    if len(golden_crosses_idx) > 0:
+        # Use safe plotting method
+        for idx in golden_crosses_idx:
+            plt.scatter([idx], [df.loc[idx, 'Close']],
+                       marker='^', color='green', s=150)
+        # Add label just once for the legend
+        plt.scatter([], [], marker='^', color='green', s=150, label='Golden Cross')
+
+    if len(death_crosses_idx) > 0:
+        # Use safe plotting method
+        for idx in death_crosses_idx:
+            plt.scatter([idx], [df.loc[idx, 'Close']],
+                       marker='v', color='red', s=150)
+        # Add label just once for the legend
+        plt.scatter([], [], marker='v', color='red', s=150, label='Death Cross')
+
+    plt.title("Price with Moving Averages and Bollinger Bands")
+    plt.ylabel("Price" if asset_type == 'forex' else "Price (₹)")
+    plt.grid(True)
+    plt.legend()
+
+    # RSI
+    plt.subplot(4, 1, 2)
+    plt.plot(df.index, df['rsi'], label='RSI', color='purple')
+    plt.axhline(y=70, color='r', linestyle='--', alpha=0.5)
+    plt.axhline(y=30, color='g', linestyle='--', alpha=0.5)
+    plt.title("Relative Strength Index (RSI)")
+    plt.ylabel("RSI")
+    plt.grid(True)
+    plt.legend()
+    
+    # MACD
+    plt.subplot(4, 1, 3)
+    plt.plot(df.index, df['macd'], label='MACD', color='blue')
+    plt.plot(df.index, df['macd_signal'], label='Signal', color='red')
+    plt.bar(df.index, df['macd_histogram'], label='Histogram', color='gray', alpha=0.3)
+    plt.title("MACD (Moving Average Convergence Divergence)")
+    plt.ylabel("MACD")
+    plt.grid(True)
+    plt.legend()
+
+    # Cumulative returns
+    plt.subplot(4, 1, 4)
+    plt.plot(df.index, df['cum_return'] * 100, label='Cumulative Return (%)', color='green')
+    plt.title("Cumulative Return")
+    plt.ylabel("Return (%)")
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
+    plt.show()
+
+# Visualization function for top assets
+def plot_top_assets(all_data, top_assets_df, n=3, asset_type='stock'):
+    """Plot price charts with indicators for top N assets"""
+    top_n = min(n, len(top_assets_df))
+
+    for i in range(top_n):
+        ticker = top_assets_df['ticker'].iloc[i]
+        asset_name = top_assets_df['name'].iloc[i]
+
+        if ticker not in all_data:
+            print(f"Data for {ticker} not found")
+            continue
+
+        df = calculate_indicators(all_data[ticker])
+        plot_asset(df, ticker, asset_name, asset_type)
+
+# Generate trading signals
+def generate_trading_signals(all_data, results_df, top_n=5):
+    """Generate trading signals for top performing assets"""
+    signals = []
+    
+    for i in range(min(top_n, len(results_df))):
+        ticker = results_df['ticker'].iloc[i]
+        asset_name = results_df['name'].iloc[i]
+        asset_type = results_df['asset_type'].iloc[i]
+        
+        if ticker not in all_data:
+            continue
+            
+        df = calculate_indicators(all_data[ticker])
+        
+        # Current price
+        current_price = df['Close'].iloc[-1]
+        
+        # Signal strength (0-100)
+        signal_strength = min(100, max(0, results_df['total_score'].iloc[i]))
+        
+        # Determine signal type based on indicators
+        signal_type = "NEUTRAL"
+        confidence = "MEDIUM"
+        
+        # RSI conditions
+        rsi = df['rsi'].iloc[-1]
+        
+        # MACD conditions
+        macd = df['macd'].iloc[-1]
+        macd_signal = df['macd_signal'].iloc[-1]
+        macd_hist = df['macd_histogram'].iloc[-1]
+        
+        # Golden/Death cross
+        golden_cross_recent = results_df['golden_cross_last_30d'].iloc[i]
+        death_cross_recent = results_df['death_cross_last_30d'].iloc[i]
+        
+        # Trend conditions
+        above_sma20 = results_df['above_sma20'].iloc[i]
+        above_sma50 = results_df['above_sma50'].iloc[i]
+        
+        # Check for bullish signals
+        bullish_signals = 0
+        if rsi > 50 and rsi < 70:
+            bullish_signals += 1
+        if macd > 0:
+            bullish_signals += 1
+        if macd > macd_signal:
+            bullish_signals += 1
+        if golden_cross_recent:
+            bullish_signals += 2
+        if above_sma20 and above_sma50:
+            bullish_signals += 2
+            
+        # Check for bearish signals
+        bearish_signals = 0
+        if rsi < 50 and rsi > 30:
+            bearish_signals += 1
+        if macd < 0:
+            bearish_signals += 1
+        if macd < macd_signal:
+            bearish_signals += 1
+        if death_cross_recent:
+            bearish_signals += 2
+        if not above_sma20 and not above_sma50:
+            bearish_signals += 2
+            
+        # Strong buy/sell signals
+        if rsi < 30 and macd > macd_signal:
+            signal_type = "STRONG BUY"
+            confidence = "HIGH"
+        elif rsi > 70 and macd < macd_signal:
+            signal_type = "STRONG SELL"
+            confidence = "HIGH"
+        # Regular buy/sell based on signal count
+        elif bullish_signals >= 4:
+            signal_type = "BUY"
+            confidence = "HIGH" if bullish_signals >= 5 else "MEDIUM"
+        elif bearish_signals >= 4:
+            signal_type = "SELL"
+            confidence = "HIGH" if bearish_signals >= 5 else "MEDIUM"
+        elif bullish_signals >= 3:
+            signal_type = "BUY"
+            confidence = "LOW"
+        elif bearish_signals >= 3:
+            signal_type = "SELL"
+            confidence = "LOW"
+            
+        # Create signal dictionary
+        signal = {
+            'ticker': ticker,
+            'name': asset_name,
+            'asset_type': asset_type,
+            'current_price': current_price,
+            'signal': signal_type,
+            'confidence': confidence,
+            'rsi': rsi,
+            'macd': macd,
+            'signal_strength': signal_strength,
+            'above_sma20': above_sma20,
+            'above_sma50': above_sma50,
+            'golden_cross_recent': golden_cross_recent,
+            'death_cross_recent': death_cross_recent
+        }
+        
+        signals.append(signal)
+    
+    # Convert to DataFrame
+    signals_df = pd.DataFrame(signals)
+    return signals_df
+
+# Main function
+def main():
+    print("Enhanced Indian Stock & Forex Screener")
+    print("=====================================")
+    
+    # Download data for all assets
+    print("\nSTEP 1: Downloading market data...")
+    print(f"Analyzing {len(indian_stocks)} Indian stocks from {start_date} to {end_date}")
+    stock_data = download_multiple_assets(indian_stocks, start_date, end_date, interval)
+    
+    print(f"Analyzing {len(forex_pairs)} Forex pairs from {start_date} to {end_date}")
+    forex_data = download_multiple_assets(forex_pairs, start_date, end_date, interval)
+    
+    # Process stocks
+    print("\nSTEP 2: Analyzing Indian stocks...")
+    stock_results = screen_assets(stock_data, 'stock')
+    stock_scored = score_assets(stock_results, 'stock')
+    
+    # Process forex
+    print("\nSTEP 3: Analyzing Forex pairs...")
+    forex_results = screen_assets(forex_data, 'forex')
+    forex_scored = score_assets(forex_results, 'forex')
+    
+    # Generate trading signals
+    print("\nSTEP 4: Generating trading signals...")
+    if len(stock_scored) > 0:
+        stock_signals = generate_trading_signals(stock_data, stock_scored, top_n=5)
+    else:
+        stock_signals = pd.DataFrame()
+        print("No valid stock data found for signal generation")
+        
+    if len(forex_scored) > 0:
+        forex_signals = generate_trading_signals(forex_data, forex_scored, top_n=5)
+    else:
+        forex_signals = pd.DataFrame()
+        print("No valid forex data found for signal generation")
+        
+    # Display top stocks
+    if len(stock_scored) > 0:
+        num_stocks_to_display = min(10, len(stock_scored))
+        print(f"\nTop {num_stocks_to_display} Indian Stocks:")
+        
+        # Format the display table
+        display_columns = [
+            'ticker', 'name', 'current_price',
+            'total_return', 'recent_30d_return', 'sharpe_ratio',
+            'rsi', 'above_sma50', 'above_sma20', 'total_score'
+        ]
+        
+        # Make sure we only select columns that actually exist
+        valid_columns = [col for col in display_columns if col in stock_scored.columns]
+        display_df = stock_scored[valid_columns].head(num_stocks_to_display)
+        
+        # Format percentages and round numbers
+        if 'total_return' in display_df.columns:
+            display_df['total_return'] = display_df['total_return'].apply(lambda x: f"{x*100:.2f}%")
+        if 'recent_30d_return' in display_df.columns:
+            display_df['recent_30d_return'] = display_df['recent_30d_return'].apply(lambda x: f"{x*100:.2f}%")
+        if 'sharpe_ratio' in display_df.columns:
+            display_df['sharpe_ratio'] = display_df['sharpe_ratio'].round(2)
+        if 'rsi' in display_df.columns:
+            display_df['rsi'] = display_df['rsi'].round(1)
+        if 'total_score' in display_df.columns:
+            display_df['total_score'] = display_df['total_score'].round(1)
+            
+        # Rename columns for better readability
+        column_mapping = {
+            'ticker': 'Ticker',
+            'name': 'Name',
+            'current_price': 'Price (₹)',
+            'total_return': 'Total Return',
+            'recent_30d_return': '30d Return',
+            'sharpe_ratio': 'Sharpe',
+            'rsi': 'RSI',
+            'above_sma50': '> SMA50',
+            'above_sma20': '> SMA20',
+            'total_score': 'Score'
+        }
+        
+        # Only rename columns that exist
+        valid_mapping = {k: v for k, v in column_mapping.items() if k in display_df.columns}
+        display_df = display_df.rename(columns=valid_mapping)
+        
+        print(display_df.to_string(index=False))
+    else:
+        print("\nNo valid stock data found for analysis")
+        
+    # Display top forex pairs
+    if len(forex_scored) > 0:
+        num_forex_to_display = min(10, len(forex_scored))
+        print(f"\nTop {num_forex_to_display} Forex Pairs:")
+        
+        # Format the display table
+        display_columns = [
+            'ticker', 'name', 'current_price',
+            'total_return', 'recent_30d_return', 'sharpe_ratio',
+            'rsi', 'momentum_10d', 'total_score'
+        ]
+        
+        # Make sure we only select columns that actually exist
+        valid_columns = [col for col in display_columns if col in forex_scored.columns]
+        display_df = forex_scored[valid_columns].head(num_forex_to_display)
+        
+        # Format percentages and round numbers
+        if 'total_return' in display_df.columns:
+            display_df['total_return'] = display_df['total_return'].apply(lambda x: f"{x*100:.2f}%")
+        if 'recent_30d_return' in display_df.columns:
+            display_df['recent_30d_return'] = display_df['recent_30d_return'].apply(lambda x: f"{x*100:.2f}%")
+        if 'momentum_10d' in display_df.columns:
+            display_df['momentum_10d'] = display_df['momentum_10d'].apply(lambda x: f"{x*100:.2f}%")
+        if 'sharpe_ratio' in display_df.columns:
+            display_df['sharpe_ratio'] = display_df['sharpe_ratio'].round(2)
+        if 'rsi' in display_df.columns:
+            display_df['rsi'] = display_df['rsi'].round(1)
+        if 'total_score' in display_df.columns:
+            display_df['total_score'] = display_df['total_score'].round(1)
+            
+        # Rename columns for better readability
+        column_mapping = {
+            'ticker': 'Ticker',
+            'name': 'Name',
+            'current_price': 'Price',
+            'total_return': 'Total Return',
+            'recent_30d_return': '30d Return',
+            'momentum_10d': '10d Momentum',
+            'sharpe_ratio': 'Sharpe',
+            'rsi': 'RSI',
+            'total_score': 'Score'
+        }
+        
+        # Only rename columns that exist
+        valid_mapping = {k: v for k, v in column_mapping.items() if k in display_df.columns}
+        display_df = display_df.rename(columns=valid_mapping)
+        
+        print(display_df.to_string(index=False))
+    else:
+        print("\nNo valid forex data found for analysis")
+    
+    # Display trading signals for stocks
+    if len(stock_signals) > 0:
+        print("\nTrading Signals for Top Indian Stocks:")
+        signals_display = stock_signals[['ticker', 'name', 'current_price', 'signal', 'confidence', 'rsi']]
+        signals_display = signals_display.rename(columns={
+            'ticker': 'Ticker',
+            'name': 'Name',
+            'current_price': 'Price (₹)',
+            'signal': 'Signal',
+            'confidence': 'Confidence',
+            'rsi': 'RSI'
+        })
+        print(signals_display.to_string(index=False))
+    
+    # Display trading signals for forex
+    if len(forex_signals) > 0:
+        print("\nTrading Signals for Top Forex Pairs:")
+        signals_display = forex_signals[['ticker', 'name', 'current_price', 'signal', 'confidence', 'rsi']]
+        signals_display = signals_display.rename(columns={
+            'ticker': 'Ticker',
+            'name': 'Name',
+            'current_price': 'Price',
+            'signal': 'Signal',
+            'confidence': 'Confidence',
+            'rsi': 'RSI'
+        })
+        print(signals_display.to_string(index=False))
+    
+    # Plot top stocks
+    print("\nGenerating charts for top stocks...")
+    if len(stock_scored) > 0:
+        plot_top_assets(stock_data, stock_scored, 3, 'stock')
+    
+    # Plot top forex pairs
+    print("\nGenerating charts for top forex pairs...")
+    if len(forex_scored) > 0:
+        plot_top_assets(forex_data, forex_scored, 3, 'forex')
+    
+    print("\nAnalysis complete!")
+    
+    return {
+          'stock_data': stock_data,
+          'forex_data': forex_data,
+          'stock_scored': stock_scored,
+          'forex_scored': forex_scored,
+          'stock_signals': stock_signals,
+          'forex_signals': forex_signals
+      }
+
+def backtest_strategy(ticker, data, start_date=None, end_date=None, initial_capital=100000):
+    """Backtest a simple trading strategy for a given ticker"""
+    # 1. Calculate indicators
+    df = calculate_indicators(data)
+
+    # 2. Drop only the initial NaN daily_return row if present
+    if 'daily_return' in df.columns:
+        df = df[df['daily_return'].notna()]
+
+    # 3. Apply optional date filtering
+    if start_date:
+        df = df[df.index >= pd.Timestamp(start_date)]
+    if end_date:
+        df = df[df.index <= pd.Timestamp(end_date)]
+
+    # If not enough data to backtest, return defaults
+    if len(df) < 2:
+        return {
+            'ticker': ticker,
+            'start_date': None,
+            'end_date': None,
+            'initial_capital': initial_capital,
+            'final_capital': initial_capital,
+            'total_return': 0.0,
+            'annual_return': 0.0,
+            'max_drawdown': 0.0,
+            'sharpe_ratio': 0.0,
+            'num_trades': 0,
+            'win_rate': 0.0,
+            'dataframe': df
+        }
+
+    # 4. Initialize positions and signals
+    df['position'] = 0
+    df['signal'] = 0
+
+    # Helper to extract pure Python scalars
+    def _val(x):
+        return x.item() if hasattr(x, 'item') else x
+
+    # 5. Backtesting loop
+    for i in range(1, len(df)):
+        # Current values as Python scalars
+        rsi_cur   = _val(df.at[df.index[i], 'rsi']) if 'rsi' in df.columns else None
+        macd_cur  = _val(df.at[df.index[i], 'macd']) if 'macd' in df.columns else None
+        sig_cur   = _val(df.at[df.index[i], 'macd_signal']) if 'macd_signal' in df.columns else None
+        close_cur = _val(df.at[df.index[i], 'Close'])
+        sma20_cur = _val(df.at[df.index[i], 'sma_short']) if 'sma_short' in df.columns else None
+
+        # Previous values
+        rsi_prev   = _val(df.at[df.index[i-1], 'rsi']) if 'rsi' in df.columns else None
+        macd_prev  = _val(df.at[df.index[i-1], 'macd']) if 'macd' in df.columns else None
+        sig_prev   = _val(df.at[df.index[i-1], 'macd_signal']) if 'macd_signal' in df.columns else None
+        close_prev = _val(df.at[df.index[i-1], 'Close'])
+        sma20_prev = _val(df.at[df.index[i-1], 'sma_short']) if 'sma_short' in df.columns else None
+
+        # Carry forward previous position
+        prev_pos = df.at[df.index[i-1], 'position']
+        df.at[df.index[i], 'position'] = prev_pos
+
+        buy_signal = False
+        sell_signal = False
+
+        # Buy conditions
+        if macd_cur is not None and sig_cur is not None and macd_cur > sig_cur and macd_prev <= sig_prev:
+            buy_signal = True
+        if rsi_cur is not None and rsi_prev is not None and rsi_cur > 30 and rsi_prev <= 30:
+            buy_signal = True
+        if sma20_cur is not None and close_cur > sma20_cur and close_prev <= sma20_prev:
+            buy_signal = True
+        if 'golden_cross' in df.columns and df.at[df.index[i], 'golden_cross']:
+            buy_signal = True
+
+        # Sell conditions
+        if macd_cur is not None and sig_cur is not None and macd_cur < sig_cur and macd_prev >= sig_prev:
+            sell_signal = True
+        if rsi_cur is not None and rsi_cur > 70:
+            sell_signal = True
+        if sma20_cur is not None and close_cur < sma20_cur and close_prev >= sma20_prev:
+            sell_signal = True
+        if 'death_cross' in df.columns and df.at[df.index[i], 'death_cross']:
+            sell_signal = True
+
+        # Update signal and position
+        if buy_signal and prev_pos <= 0:
+            df.at[df.index[i], 'signal'] = 1
+            df.at[df.index[i], 'position'] = 1
+        elif sell_signal and prev_pos >= 0:
+            df.at[df.index[i], 'signal'] = -1
+            df.at[df.index[i], 'position'] = -1
+
+    # 6. Compute returns
+    df['strategy_return'] = df['position'].shift(1) * df['daily_return']
+    df['strategy_return'].fillna(0, inplace=True)
+    df['strategy_cum_return'] = (1 + df['strategy_return']).cumprod() - 1
+    df['buy_hold_cum_return'] = (1 + df['daily_return']).cumprod() - 1
+
+    # 7. Portfolio value and drawdown
+    df['portfolio_value'] = initial_capital * (1 + df['strategy_cum_return'].fillna(0))
+    df['drawdown'] = df['portfolio_value'] / df['portfolio_value'].cummax() - 1
+
+    # 8. Performance metrics
+    end_value    = df['portfolio_value'].iloc[-1]
+    total_return = (end_value / initial_capital - 1) * 100
+    days         = (df.index[-1] - df.index[0]).days or 1
+    annual_return= ((end_value / initial_capital) ** (365 / days) - 1) * 100
+    max_drawdown = df['drawdown'].min() * 100
+
+    vol    = df['strategy_return'].std()
+    sharpe = (df['strategy_return'].mean() / vol * np.sqrt(252)) if vol > 0 else 0.0
+
+    trades   = df[df['signal'] != 0]
+    n_trades = len(trades)
+    win_rate = (len(trades[trades['strategy_return'] > 0]) / n_trades * 100) if n_trades > 0 else 0.0
 
     return {
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'buy_signals': buy_signals,
-        'sell_signals': sell_signals,
-        'no_signals': len(results) - len(buy_signals) - len(sell_signals)
+        'ticker': ticker,
+        'start_date': df.index[0] if not df.empty else None,
+        'end_date': df.index[-1] if not df.empty else None,
+        'initial_capital': initial_capital,
+        'final_capital': end_value if not df.empty else initial_capital,
+        'total_return': total_return,
+        'annual_return': annual_return,
+        'max_drawdown': max_drawdown,
+        'sharpe_ratio': sharpe,
+        'num_trades': n_trades,
+        'win_rate': win_rate,
+        'dataframe': df
     }
 
-def display_top_stocks(screening_results, top_n=5):
-    """Display the top trading opportunities"""
-    timestamp = screening_results['timestamp']
-    buy_signals = screening_results['buy_signals']
-    sell_signals = screening_results['sell_signals']
 
-    print(f"\n===== INDIAN STOCK TRADING OPPORTUNITIES ({timestamp}) =====")
 
-    print(f"\n----- TOP {min(top_n, len(buy_signals))} BUY OPPORTUNITIES -----")
-    if buy_signals:
-        for i, stock in enumerate(buy_signals[:top_n]):
-            print(f"{i+1}. {stock['instrument']} - ₹{stock['current_price']:.2f} | "
-                  f"Bullish Score: {stock['bullish_score']} | "
-                  f"Momentum: {stock['momentum_5d']*100:.2f}% | "
-                  f"RSI: {stock['rsi']:.1f} | "
-                  f"Spread: {stock['spread_pct']}%")
-            print(f"   → Recommend: {stock['recommended_shares']} shares | "
-                  f"SL: ₹{stock['stop_loss']:.2f} | "
-                  f"TP: ₹{stock['take_profit']:.2f}")
+def run_algo_trading_simulation(all_data, top_tickers, initial_capital=100000, asset_type='stock'):
+    """Run algorithmic trading simulation on top assets"""
+    results = []
+    
+    print(f"\nRunning algorithmic trading simulation for top {asset_type}s...")
+    for ticker in top_tickers:
+        if ticker not in all_data:
+            print(f"Data for {ticker} not found, skipping...")
+            continue
+            
+        print(f"Backtesting {ticker}...")
+        backtest_result = backtest_strategy(ticker, all_data[ticker], initial_capital=initial_capital)
+        results.append(backtest_result)
+        
+    # Display results
+    print(f"\nAlgorithmic Trading Results for {asset_type.capitalize()}s:")
+    if len(results) > 0:
+        results_df = pd.DataFrame([
+            {
+                'Ticker': r['ticker'],
+                'Total Return (%)': f"{r['total_return']:.2f}%",
+                'Annual Return (%)': f"{r['annual_return']:.2f}%",
+                'Max Drawdown (%)': f"{r['max_drawdown']:.2f}%",
+                'Sharpe Ratio': round(r['sharpe_ratio'], 2),
+                'Trades': r['num_trades'],
+                'Win Rate (%)': f"{r['win_rate']:.1f}%",
+                'Final Capital': f"₹{r['final_capital']:,.2f}" if asset_type == 'stock' else f"${r['final_capital']:,.2f}"
+            }
+            for r in results
+        ])
+        
+        print(results_df.to_string(index=False))
+        
+        # Plot returns for the best performing asset
+        best_idx = 0
+        best_return = -float('inf')
+        for i, r in enumerate(results):
+            if r['total_return'] > best_return:
+                best_return = r['total_return']
+                best_idx = i
+                
+        if best_idx < len(results):
+            best_result = results[best_idx]
+            plot_trading_performance(best_result, asset_type)
     else:
-        print("No buy signals detected")
-
-    print(f"\n----- TOP {min(top_n, len(sell_signals))} SELL/SHORT OPPORTUNITIES -----")
-    if sell_signals:
-        for i, stock in enumerate(sell_signals[:top_n]):
-            print(f"{i+1}. {stock['instrument']} - ₹{stock['current_price']:.2f} | "
-                  f"Bearish Score: {stock['bearish_score']} | "
-                  f"Momentum: {stock['momentum_5d']*100:.2f}% | "
-                  f"RSI: {stock['rsi']:.1f} | "
-                  f"Spread: {stock['spread_pct']}%")
-            print(f"   → Recommend: {stock['recommended_shares']} shares | "
-                  f"SL: ₹{stock['stop_loss']:.2f} | "
-                  f"TP: ₹{stock['take_profit']:.2f}")
-    else:
-        print("No sell signals detected")
-
-    print(f"\nTotal stocks analyzed: {len(buy_signals) + len(sell_signals) + screening_results['no_signals']}")
-    print(f"Stocks with buy signals: {len(buy_signals)}")
-    print(f"Stocks with sell signals: {len(sell_signals)}")
-    print(f"Stocks with no signals: {screening_results['no_signals']}")
-    print("\n================================================")
-
-def execute_trades(screening_results):
-    """Execute trades based on the signals"""
-    if not Config.AUTO_TRADE:
-        logger.info("Auto-trading disabled. No trades executed.")
-        return
-
-    logger.info("Auto-trading enabled. Executing trades based on signals.")
-
-    # Get current open positions
-    open_positions = get_open_positions()
-    open_symbols = []
-
-    # Extract symbols from open positions
-    for position in open_positions:
-        instrument = position.get('instrument', '')
-        # Map back from OANDA instrument to stock symbol if needed
-        for stock, forex in FOREX_PAIRS_MAPPING.items():
-            if instrument == forex:
-                open_symbols.append(stock)
-                break
-
-    logger.info(f"Current open positions: {open_symbols}")
-
-    # Check if we have room for new positions
-    available_slots = Config.MAX_OPEN_POSITIONS - len(open_symbols)
-    if available_slots <= 0:
-        logger.info(f"Maximum number of positions ({Config.MAX_OPEN_POSITIONS}) already reached. No new trades.")
-        return
-
-    # Process buy signals first
-    executed_trades = 0
-    for signal in screening_results['buy_signals']:
-        # Skip if we already have this position
-        if signal['instrument'] in open_symbols:
-            logger.info(f"Position already open for {signal['instrument']}. Skipping.")
-            continue
-
-        # Skip if score is below minimum threshold
-        if signal['bullish_score'] < Config.SIGNAL_THRESHOLD:
-            continue
-
-        # Place buy order
-        shares = signal['recommended_shares']
-        stop_loss = signal['stop_loss']
-        take_profit = signal['take_profit']
-
-        logger.info(f"Placing BUY order for {signal['instrument']}: {shares} shares at ~₹{signal['current_price']:.2f}")
-
-        order_result = place_order(
-            signal['instrument'],
-            shares,
-            True,  # is_buy
-            stop_loss,
-            take_profit
-        )
-
-        if order_result['success']:
-            logger.info(f"Successfully placed BUY order for {signal['instrument']}")
-            executed_trades += 1
-        else:
-            logger.error(f"Failed to place BUY order for {signal['instrument']}")
-
-        # Break if we've filled all available slots
-        if executed_trades >= available_slots:
-            break
-
-    # If we still have slots, process sell signals for short positions
-    available_slots = Config.MAX_OPEN_POSITIONS - len(open_symbols) - executed_trades
-    if available_slots <= 0:
-        return
-
-    for signal in screening_results['sell_signals']:
-        # Skip if we already have this position
-        if signal['instrument'] in open_symbols:
-            logger.info(f"Position already open for {signal['instrument']}. Skipping.")
-            continue
-
-        # Skip if score is below minimum threshold
-        if signal['bearish_score'] < Config.SIGNAL_THRESHOLD:
-            continue
-
-        # Place sell order
-        shares = signal['recommended_shares']
-        stop_loss = signal['stop_loss']
-        take_profit = signal['take_profit']
-
-        logger.info(f"Placing SELL/SHORT order for {signal['instrument']}: {shares} shares at ~₹{signal['current_price']:.2f}")
-
-        order_result = place_order(
-            signal['instrument'],
-            shares,
-            False,  # is_buy
-            stop_loss,
-            take_profit
-        )
-
-        if order_result['success']:
-            logger.info(f"Successfully placed SELL/SHORT order for {signal['instrument']}")
-            executed_trades += 1
-        else:
-            logger.error(f"Failed to place SELL/SHORT order for {signal['instrument']}")
-
-        # Break if we've filled all available slots
-        if executed_trades >= available_slots:
-            break
-
-def fetch_top_indian_stocks(top_n=15):
-    """Fetch top performing Indian stocks based on recent performance"""
-    logger.info(f"Fetching top {top_n} Indian stocks...")
-
-    try:
-        # Here we would ideally use a more comprehensive API for Indian markets
-        # For now, let's use a combination of indices and manual addition of major stocks
-
-        # NSE Nifty 50 components - we'll use yfinance to check their performance
-        potential_stocks = [
-            'RELIANCE', 'TCS', 'HDFCBANK', 'INFY', 'ICICIBANK', 'HINDUNILVR',
-            'KOTAKBANK', 'BHARTIARTL', 'ITC', 'SBIN', 'BAJFINANCE', 'ASIANPAINT',
-            'LT', 'AXISBANK', 'MARUTI', 'HCLTECH', 'WIPRO', 'NTPC', 'SUNPHARMA',
-            'ONGC', 'TATAMOTORS', 'ULTRACEMCO', 'TATASTEEL', 'ADANIPORTS', 'M&M'
-        ]
-
-        stock_performance = []
-
-        # Get 1-month performance for each stock
-        for stock in potential_stocks:
-            try:
-                data = get_historical_data(stock, period="30d")
-                if data is not None and len(data) > 5:
-                    first_price = data['Close'].iloc[0]
-                    last_price = data['Close'].iloc[-1]
-                    performance = (last_price / first_price - 1) * 100  # Percentage change
-
-                    stock_performance.append({
-                        'symbol': stock,
-                        'performance': performance,
-                        'price': last_price
-                    })
-            except Exception as e:
-                logger.warning(f"Could not fetch performance for {stock}: {e}")
-
-        # Sort by performance
-        stock_performance.sort(key=lambda x: x['performance'], reverse=True)
-
-        # Get top N performing stocks
-        top_stocks = [stock['symbol'] for stock in stock_performance[:top_n]]
-
-        logger.info(f"Top {len(top_stocks)} Indian stocks fetched: {top_stocks}")
-        return top_stocks
-
-    except Exception as e:
-        logger.error(f"Error fetching top Indian stocks: {e}")
-        # Return default stocks if fetching fails
-        return Config.TRADABLE_INSTRUMENTS[:min(top_n, len(Config.TRADABLE_INSTRUMENTS))]
-
-def run_trading_cycle():
-    """Run a single trading cycle"""
-    logger.info(f"Running trading cycle at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # Get account information
-    account_info = get_account_info()
-    if account_info:
-        print(f"\nAccount Balance: {account_info['currency']} {account_info['balance']:.2f}")
-        print(f"Margin Available: {account_info['currency']} {account_info['margin_available']:.2f}")
-        print(f"Open Positions: {account_info['open_positions']}")
-        print("\n")
-
-    # Check for any delisted stocks
-    check_delisted_stocks()
-
-    # Run stock screening
-    screening_results = screen_stocks()
-
-    # Display top opportunities
-    display_top_stocks(screening_results)
-
-    # Execute trades based on signals
-    execute_trades(screening_results)
-
-    return screening_results
-
-def run_continuous_trading():
-    """Run continuous trading cycles with specified interval"""
-    logger.info(f"Starting continuous trading with {Config.SCAN_INTERVAL_MINUTES} minute intervals")
-
-    try:
-        while True:
-            # Run a trading cycle
-            run_trading_cycle()
-
-            # Calculate next run time
-            next_run = datetime.now() + timedelta(minutes=Config.SCAN_INTERVAL_MINUTES)
-            logger.info(f"Next trading cycle scheduled for {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
-
-            # Sleep until next cycle
-            time.sleep(Config.SCAN_INTERVAL_MINUTES * 60)
-    except KeyboardInterrupt:
-        logger.info("Trading stopped by user.")
-    except Exception as e:
-        logger.error(f"Error in continuous trading: {e}")
-
-def run_diagnostics():
-    """Run system diagnostics to verify everything is working"""
-    print("\n===== RUNNING SYSTEM DIAGNOSTICS =====")
-
-    # Check OANDA connection
-    print("\nChecking OANDA API connection...")
-    try:
-        r = accounts.AccountSummary(OandaConfig.ACCOUNT_ID)
-        api.request(r)
-        print("✓ OANDA API connection successful")
-    except Exception as e:
-        print(f"✗ OANDA API connection failed: {e}")
-
-    # Check yfinance data retrieval
-    print("\nChecking market data retrieval...")
-    try:
-        test_stock = Config.TRADABLE_INSTRUMENTS[0]
-        data = get_historical_data(test_stock, period="5d")
-        if data is not None and len(data) > 0:
-            print(f"✓ Successfully retrieved data for {test_stock}")
-        else:
-            print(f"✗ Failed to retrieve sufficient data for {test_stock}")
-    except Exception as e:
-        print(f"✗ Market data retrieval failed: {e}")
-
-    # Check technical indicators calculation
-    print("\nChecking technical indicators calculation...")
-    try:
-        if data is not None:
-            indicators = calculate_technical_indicators(data)
-            if indicators is not None:
-                print("✓ Technical indicators calculation successful")
-            else:
-                print("✗ Technical indicators calculation failed")
-        else:
-            print("✗ Cannot check indicators - no data available")
-    except Exception as e:
-        print(f"✗ Technical indicators check failed: {e}")
-
-    # Check available instruments on OANDA
-    print("\nChecking available instruments on OANDA...")
-    try:
-        instruments = get_available_instruments()
-        if instruments:
-            print(f"✓ Successfully retrieved {len(instruments)} instruments from OANDA")
-        else:
-            print("✗ Failed to retrieve instruments from OANDA")
-    except Exception as e:
-        print(f"✗ Instrument retrieval failed: {e}")
-
-    print("\n===== DIAGNOSTICS COMPLETE =====\n")
-
-def run_backtest():
-    """Run a simple parameter backtest"""
-    print("\n===== RUNNING PARAMETER BACKTEST =====")
-
-    # Test different signal thresholds
-    thresholds = [1, 2, 3]
-
-    for threshold in thresholds:
-        print(f"\nTesting signal threshold = {threshold}")
-        # Temporarily change the signal threshold
-        original_threshold = Config.SIGNAL_THRESHOLD
-        Config.SIGNAL_THRESHOLD = threshold
-
-        # Run stock screening without executing trades
-        screening_results = screen_stocks()
-        buy_count = len(screening_results['buy_signals'])
-        sell_count = len(screening_results['sell_signals'])
-
-        print(f"Buy signals: {buy_count}")
-        print(f"Sell signals: {sell_count}")
-        print(f"Total signals: {buy_count + sell_count}")
-
-        # Restore original threshold
-        Config.SIGNAL_THRESHOLD = original_threshold
-
-    print("\n===== BACKTEST COMPLETE =====\n")
-
-def main():
-    """Main function to run the trading system"""
-    print("\n===== INDIAN STOCK ALGORITHMIC TRADING SYSTEM =====")
-    print("Auto-trading:", "Enabled" if Config.AUTO_TRADE else "Disabled")
-    print("Running on", "Practice account" if OandaConfig.PRACTICE else "Live account")
-
-    # Set up execution mode
-    Config.EXECUTION_MODE = create_alternative_execution_method()
-
-    # Fetch top Indian stocks
-    Config.TRADABLE_INSTRUMENTS = fetch_top_indian_stocks(15)
-
-    # Check if we can connect to the OANDA API
-    try:
-        r = accounts.AccountSummary(OandaConfig.ACCOUNT_ID)
-        api.request(r)
-        print("Successfully connected to OANDA API")
-
-        # Get account information
-        account_info = get_account_info()
-        if account_info:
-            print(f"Account Balance: {account_info['currency']} {account_info['balance']:.2f}")
-            print(f"Margin Available: {account_info['currency']} {account_info['margin_available']:.2f}")
-    except Exception as e:
-        print(f"Failed to connect to OANDA API: {e}")
-        print("Running in simulation mode only")
-        Config.EXECUTION_MODE = "simulation"
-
-    # Main menu loop
-    while True:
-        print("\nWhat would you like to do?")
-        print("1. Run trading cycle")
-        print("2. Run continuous trading")
-        print("3. Run diagnostics")
-        print("4. Run parameter backtest")
-        print("5. Check available instruments")
-        print("6. Update stock universe automatically")
-
-        try:
-            choice = input("Enter choice (1-6): ")
-
-            if choice == '1':
-                run_trading_cycle()
-            elif choice == '2':
-                run_continuous_trading()
-            elif choice == '3':
-                run_diagnostics()
-            elif choice == '4':
-                run_backtest()
-            elif choice == '5':
-                instruments = get_available_instruments()
-                print(f"\nAvailable instruments on OANDA ({len(instruments)}):")
-                for name, display_name in instruments.items():
-                    print(f"- {name}: {display_name}")
-            elif choice == '6':
-                Config.TRADABLE_INSTRUMENTS = fetch_top_indian_stocks(15)
-                print(f"Updated stock universe: {Config.TRADABLE_INSTRUMENTS}")
-            else:
-                print("Invalid choice. Please try again.")
-        except KeyboardInterrupt:
-            print("\nExiting program...")
-            break
-        except Exception as e:
-            logger.error(f"Error in main menu: {e}")
-            print(f"An error occurred: {e}")
-
+        print(f"No valid {asset_type} data for simulation")
+        
+    return results
+
+def plot_trading_performance(backtest_result, asset_type='stock'):
+    """
+    Plot the performance of a trading strategy, handling missing 'signal' gracefully
+    to avoid KeyError and empty-legend warnings.
+    """
+    df = backtest_result.get('dataframe', pd.DataFrame())
+    ticker = backtest_result.get('ticker', '')
+
+    plt.figure(figsize=(14, 12))
+    title_prefix = "Stock" if asset_type == 'stock' else "Forex"
+    plt.suptitle(f"{title_prefix} Trading Strategy Performance for {ticker}", fontsize=16)
+
+    # 1) Price and signals
+    plt.subplot(3, 1, 1)
+    if 'Close' in df.columns:
+        plt.plot(df.index, df['Close'], label='Close Price')
+
+    # Only plot buy/sell if 'signal' exists
+    if 'signal' in df.columns:
+        # Buy signals
+        buys = df[df['signal'] == 1]
+        if not buys.empty:
+            plt.scatter(buys.index, buys['Close'],
+                        marker='^', s=100, label='Buy Signal')
+
+        # Sell signals
+        sells = df[df['signal'] == -1]
+        if not sells.empty:
+            plt.scatter(sells.index, sells['Close'],
+                        marker='v', s=100, label='Sell Signal')
+
+    plt.title("Price and Trading Signals")
+    plt.ylabel("Price (₹)" if asset_type == 'stock' else "Price")
+    plt.grid(True)
+    # Draw legend only if there are labeled artists
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend()
+
+    # 2) Portfolio value
+    plt.subplot(3, 1, 2)
+    if 'portfolio_value' in df.columns:
+        plt.plot(df.index, df['portfolio_value'], label='Portfolio Value')
+
+    plt.title("Portfolio Value Over Time")
+    plt.ylabel("Value (₹)" if asset_type == 'stock' else "Value")
+    plt.grid(True)
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend()
+
+    # 3) Strategy vs Buy & Hold returns
+    plt.subplot(3, 1, 3)
+    if 'strategy_cum_return' in df.columns:
+        plt.plot(df.index, df['strategy_cum_return'] * 100,
+                 label='Strategy Return')
+    if 'buy_hold_cum_return' in df.columns:
+        plt.plot(df.index, df['buy_hold_cum_return'] * 100,
+                 label='Buy & Hold Return')
+
+    plt.title("Strategy vs Buy & Hold Returns")
+    plt.ylabel("Return (%)")
+    plt.grid(True)
+    handles, labels = plt.gca().get_legend_handles_labels()
+    if handles:
+        plt.legend()
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.9)
+    plt.show()
+
+
+
+# Run the main program
 if __name__ == "__main__":
-    main()
+    results = main()
+    
+    run_simulation = input("\nDo you want to run an algorithmic trading simulation? (y/n): ").lower().strip() == 'y'
+    
+    if run_simulation:
+        try:
+            capital = float(input("Enter initial capital amount (default: 100000): "))
+        except ValueError:
+            capital = 100000
+            print(f"Using default initial capital: {capital}")
+            
+        if len(results['stock_scored']) > 0:
+            top_stock_tickers = results['stock_scored']['ticker'].head(3).tolist()
+            stock_sim_results = run_algo_trading_simulation(
+                {ticker: calculate_indicators(df) for ticker, df in results['stock_data'].items()},
+                top_stock_tickers,
+                initial_capital=capital,
+                asset_type='stock'
+            )
+            
+        if len(results['forex_scored']) > 0:
+            top_forex_tickers = results['forex_scored']['ticker'].head(3).tolist()
+            forex_sim_results = run_algo_trading_simulation(
+                {ticker: calculate_indicators(df) for ticker, df in results['forex_data'].items()},
+                top_forex_tickers,
+                initial_capital=capital,
+                asset_type='forex'
+            )
