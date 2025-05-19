@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algo Trading Admin Panel</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-2 d-none d-md-block sidebar">
+                <div class="sidebar-sticky">
+                    <div class="sidebar-header mb-4">
+                        <h3>Algo Trading</h3>
+                        <p>Admin Panel</p>
+                    </div>
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="#dashboard" data-bs-toggle="tab">
+                                <i class="fas fa-tachometer-alt me-2"></i> Dashboard
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#top-stocks" data-bs-toggle="tab">
+                                <i class="fas fa-chart-line me-2"></i> Top Stocks
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#forex" data-bs-toggle="tab">
+                                <i class="fas fa-dollar-sign me-2"></i> Forex
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#futures-options" data-bs-toggle="tab">
+                                <i class="fas fa-file-contract me-2"></i> Futures & Options
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="#history" data-bs-toggle="tab">
+                                <i class="fas fa-history me-2"></i> History
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <main role="main" class="col-md-10 ms-sm-auto px-4">
+                <div class="tab-content">
+                    <!-- Dashboard Tab -->
+                    <div class="tab-pane fade show active" id="dashboard">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">Dashboard</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <div class="btn-group me-2">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-data">
+                                        <i class="fas fa-sync-alt"></i> Refresh Data
+                                    </button>
+                                </div>
+                                <div class="dropdown">
+                                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" id="dropdownMenuButton" data-bs-toggle="dropdown" aria-expanded="false">
+                                        <i class="far fa-calendar-alt"></i> Today
+                                    </button>
+                                    <ul class="dropdown-menu" aria-labelledby="dropdownMenuButton">
+                                        <li><a class="dropdown-item" href="#">Today</a></li>
+                                        <li><a class="dropdown-item" href="#">This Week</a></li>
+                                        <li><a class="dropdown-item" href="#">This Month</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Overview Cards -->
+                        <div class="row mb-4">
+                            <div class="col-md-3">
+                                <div class="card text-white bg-primary">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Top Stock</h5>
+                                        <h3 class="card-text" id="top-stock-name">Loading...</h3>
+                                        <p class="card-text" id="top-stock-price">₹0.00</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-white bg-success">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Top Forex</h5>
+                                        <h3 class="card-text" id="top-forex-name">Loading...</h3>
+                                        <p class="card-text" id="top-forex-price">0.0000</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-white bg-warning">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Key Future</h5>
+                                        <h3 class="card-text" id="key-future-name">Loading...</h3>
+                                        <p class="card-text" id="key-future-rec">Neutral</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card text-white bg-info">
+                                    <div class="card-body">
+                                        <h5 class="card-title">Market Trend</h5>
+                                        <h3 class="card-text" id="market-trend">Loading...</h3>
+                                        <p class="card-text" id="market-trend-desc">Analyzing...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Charts Row -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5>Top Stocks Performance</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="stocksChart" height="250"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5>Forex Performance</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="forexChart" height="250"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Key Stocks Today -->
+                        <div class="row mb-4">
+                            <div class="col-md-12">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5>Key Stocks for Today</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Ticker</th>
+                                                        <th>Name</th>
+                                                        <th>Price (₹)</th>
+                                                        <th>Change (%)</th>
+                                                        <th>RSI</th>
+                                                        <th>MACD</th>
+                                                        <th>Signal</th>
+                                                        <th>Score</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="key-stocks-table">
+                                                    <tr>
+                                                        <td colspan="8" class="text-center">Loading data...</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Top Stocks Tab -->
+                    <div class="tab-pane fade" id="top-stocks">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">Top Indian Stocks</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-stocks">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Stocks Table -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Top Performing Stocks</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Ticker</th>
+                                                <th>Name</th>
+                                                <th>Price (₹)</th>
+                                                <th>Total Return (%)</th>
+                                                <th>30d Return (%)</th>
+                                                <th>RSI</th>
+                                                <th>Above SMA50</th>
+                                                <th>Above SMA20</th>
+                                                <th>Score</th>
+                                                <th>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="top-stocks-table">
+                                            <tr>
+                                                <td colspan="10" class="text-center">Loading data...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stock Details -->
+                        <div class="card mb-4" id="stock-details-card" style="display: none;">
+                            <div class="card-header">
+                                <h5>Stock Details: <span id="stock-details-name"></span></h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-8">
+                                        <canvas id="stockDetailChart" height="300"></canvas>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="card">
+                                            <div class="card-header">
+                                                <h6>Technical Indicators</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <table class="table table-sm">
+                                                    <tbody>
+                                                        <tr>
+                                                            <th>Current Price:</th>
+                                                            <td id="detail-price">₹0.00</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>Change (%):</th>
+                                                            <td id="detail-change">0.00%</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>RSI (14):</th>
+                                                            <td id="detail-rsi">0.00</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>MACD:</th>
+                                                            <td id="detail-macd">0.00</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>SMA (20):</th>
+                                                            <td id="detail-sma20">₹0.00</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <th>SMA (50):</th>
+                                                            <td id="detail-sma50">₹0.00</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Forex Tab -->
+                    <div class="tab-pane fade" id="forex">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">Forex Trading</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-forex">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Forex Table -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Top Performing Forex Pairs</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Ticker</th>
+                                                <th>Name</th>
+                                                <th>Price</th>
+                                                <th>Total Return (%)</th>
+                                                <th>30d Return (%)</th>
+                                                <th>RSI</th>
+                                                <th>Momentum (10d)</th>
+                                                <th>Score</th>
+                                                <th>Signal</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="top-forex-table">
+                                            <tr>
+                                                <td colspan="9" class="text-center">Loading data...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Forex Charts -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Forex Performance Charts</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <canvas id="forexPerformanceChart" height="300"></canvas>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <canvas id="forexVolatilityChart" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Futures & Options Tab -->
+                    <div class="tab-pane fade" id="futures-options">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">Futures & Options</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-options">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Options Table -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Key Futures & Options for Today</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Symbol</th>
+                                                <th>Expiry</th>
+                                                <th>Strike</th>
+                                                <th>Call Price</th>
+                                                <th>Put Price</th>
+                                                <th>Call OI</th>
+                                                <th>Put OI</th>
+                                                <th>Call IV</th>
+                                                <th>Put IV</th>
+                                                <th>Recommendation</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="options-table">
+                                            <tr>
+                                                <td colspan="10" class="text-center">Loading data...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Options Charts -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Options Analysis</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <canvas id="optionsOIChart" height="300"></canvas>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <canvas id="optionsIVChart" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- History Tab -->
+                    <div class="tab-pane fade" id="history">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">Historical Data</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <div class="btn-group me-2">
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="history-7d">7 Days</button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="history-30d">30 Days</button>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="history-90d">90 Days</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- History Date Selector -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Select Date</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-12">
+                                        <div id="history-dates" class="d-flex flex-wrap">
+                                            <div class="spinner-border text-primary" role="status">
+                                                <span class="visually-hidden">Loading...</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Historical Data Display -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5>Historical Top Stocks</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Ticker</th>
+                                                        <th>Name</th>
+                                                        <th>Price (₹)</th>
+                                                        <th>Return (%)</th>
+                                                        <th>Score</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="history-stocks-table">
+                                                    <tr>
+                                                        <td colspan="5" class="text-center">Select a date to view historical data</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5>Historical Top Forex</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="table-responsive">
+                                            <table class="table table-striped table-sm">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Ticker</th>
+                                                        <th>Name</th>
+                                                        <th>Price</th>
+                                                        <th>Return (%)</th>
+                                                        <th>Score</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="history-forex-table">
+                                                    <tr>
+                                                        <td colspan="5" class="text-center">Select a date to view historical data</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Performance Trend Chart -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Performance Trends</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="historyTrendChart" height="300"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+</body>
+</html>
