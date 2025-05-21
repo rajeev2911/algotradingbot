@@ -1,5 +1,5 @@
-# Enhanced Indian Stock Screener with Forex Trading
-# This script analyzes multiple Indian stocks and forex pairs to identify top performers
+# Enhanced USA Stock Screener with Forex Trading
+# This script analyzes multiple USA stocks and forex pairs to identify top performers
 
 # Core Imports
 import pandas as pd
@@ -14,17 +14,22 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 import pickle
+import ssl
+import urllib3
+
+# Disable SSL warnings - for development environments only
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Cache directory
 CACHE_DIR = 'data/cache'
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-def get_nse_stocks(use_cache=True, cache_days=1):
+def get_usa_stocks(use_cache=True, cache_days=1, max_stocks=50):
     """
-    Fetch all stocks listed on NSE (National Stock Exchange of India)
-    Returns a list of stock symbols with .NS suffix for Yahoo Finance
+    Fetch top USA stocks from S&P 500 and Nasdaq
+    Returns a list of stock symbols for Yahoo Finance
     """
-    cache_file = os.path.join(CACHE_DIR, 'nse_stocks.pkl')
+    cache_file = os.path.join(CACHE_DIR, 'usa_stocks.pkl')
     
     # Check if cache exists and is recent
     if use_cache and os.path.exists(cache_file):
@@ -37,49 +42,44 @@ def get_nse_stocks(use_cache=True, cache_days=1):
                 pass  # If cache loading fails, fetch fresh data
     
     try:
-        # Method 1: Scrape from NSE website
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get('https://www.nseindia.com/regulations/listing-compliance/nse-market-capitalisation-all-companies', headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Extract stock symbols from the table
+        # Method 1: Try to get S&P 500 constituents from Yahoo Finance
         stocks = []
-        table = soup.find('table', {'id': 'equityStockTable'})
-        if table:
-            rows = table.find_all('tr')
-            for row in rows[1:]:  # Skip header row
-                cols = row.find_all('td')
-                if len(cols) > 1:
-                    symbol = cols[1].text.strip()
-                    stocks.append(f"{symbol}.NS")
+        try:
+            sp500_url = "https://finance.yahoo.com/quote/%5EGSPC/components?p=%5EGSPC"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            response = requests.get(sp500_url, headers=headers)
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            table = soup.find('table', {'class': 'W(100%)'})
+            if table:
+                rows = table.find_all('tr')
+                for row in rows[1:]:  # Skip header
+                    symbol = row.find('td').text.strip()
+                    if symbol:
+                        stocks.append(symbol)
+        except Exception as e:
+            print(f"Error fetching S&P 500 stocks: {e}")
         
-        # If web scraping fails, fall back to top stocks
+        # If web scraping fails, fall back to top USA stocks
         if not stocks:
             stocks = [
-                "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-                "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
-                "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS",
-                "SUNPHARMA.NS", "TATAMOTORS.NS", "BAJFINANCE.NS", "TITAN.NS", "WIPRO.NS"
+                "AAPL", "MSFT", "AMZN", "GOOGL", "META", 
+                "TSLA", "NVDA", "JPM", "JNJ", "V",
+                "PG", "UNH", "HD", "BAC", "MA",
+                "DIS", "ADBE", "CRM", "NFLX", "INTC",
+                "CSCO", "VZ", "CMCSA", "PEP", "KO",
+                "ABT", "MRK", "PFE", "T", "WMT",
+                "XOM", "CVX", "ABBV", "COST", "AVGO",
+                "TMO", "ACN", "NKE", "MDT", "NEE",
+                "LLY", "PM", "TXN", "DHR", "UNP",
+                "HON", "QCOM", "LIN", "AMT", "IBM"
             ]
-            
-            # Try Method 2: Use Yahoo Finance API to get NIFTY 500 constituents
-            try:
-                nifty500_url = "https://finance.yahoo.com/quote/%5ECNX/components?p=%5ECNX"
-                response = requests.get(nifty500_url, headers=headers)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                table = soup.find('table', {'class': 'W(100%)'})
-                if table:
-                    rows = table.find_all('tr')
-                    stocks = []
-                    for row in rows[1:]:  # Skip header
-                        symbol = row.find('td').text.strip()
-                        if symbol:
-                            stocks.append(f"{symbol}.NS")
-            except:
-                pass  # Fall back to the default list if this fails too
+        
+        # Limit the number of stocks
+        if max_stocks and len(stocks) > max_stocks:
+            stocks = stocks[:max_stocks]
         
         # Cache the results
         if stocks:
@@ -89,13 +89,13 @@ def get_nse_stocks(use_cache=True, cache_days=1):
         return stocks
     
     except Exception as e:
-        print(f"Error fetching NSE stocks: {e}")
+        print(f"Error fetching USA stocks: {e}")
         # Fallback to default list
         return [
-            "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
-            "HINDUNILVR.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "KOTAKBANK.NS",
-            "LT.NS", "AXISBANK.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS",
-            "SUNPHARMA.NS", "TATAMOTORS.NS", "BAJFINANCE.NS", "TITAN.NS", "WIPRO.NS"
+            "AAPL", "MSFT", "AMZN", "GOOGL", "META", 
+            "TSLA", "NVDA", "JPM", "JNJ", "V",
+            "PG", "UNH", "HD", "BAC", "MA",
+            "DIS", "ADBE", "CRM", "NFLX", "INTC"
         ]
 
 def get_forex_pairs(use_cache=True, cache_days=1):
@@ -120,8 +120,8 @@ def get_forex_pairs(use_cache=True, cache_days=1):
             # Major pairs
             "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "USDCHF=X", "NZDUSD=X",
             
-            # INR pairs (Indian Rupee)
-            "INR=X", "EURINR=X", "GBPINR=X", "JPYINR=X", "AUDINR=X", "CADINR=X", "CHFINR=X", "NZDINR=X",
+            # USD pairs
+            "USDCNY=X", "USDHKD=X", "USDSEK=X", "USDNOK=X", "USDDKK=X", "USDSGD=X", "USDZAR=X",
             
             # EUR pairs
             "EURGBP=X", "EURJPY=X", "EURAUD=X", "EURCAD=X", "EURCHF=X", "EURNZD=X",
@@ -146,21 +146,21 @@ def get_forex_pairs(use_cache=True, cache_days=1):
         print(f"Error creating forex pairs list: {e}")
         # Fallback to default list
         return [
-            "INR=X", "EURINR=X", "GBPINR=X", "JPYINR=X", "EURUSD=X", 
-            "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X"
+            "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "USDCAD=X", 
+            "USDCHF=X", "NZDUSD=X", "EURGBP=X", "EURJPY=X", "USDCNY=X"
         ]
 
 # Use dynamic lists instead of hardcoded ones
-indian_stocks = get_nse_stocks()
+usa_stocks = get_usa_stocks()
 forex_pairs = get_forex_pairs()
 
 # Limit the number of stocks/pairs to analyze if needed (to avoid API limits)
 MAX_STOCKS = 50  # Adjust based on your needs
 MAX_FOREX = 20   # Adjust based on your needs
 
-if len(indian_stocks) > MAX_STOCKS:
-    print(f"Limiting analysis to top {MAX_STOCKS} Indian stocks")
-    indian_stocks = indian_stocks[:MAX_STOCKS]
+if len(usa_stocks) > MAX_STOCKS:
+    print(f"Limiting analysis to top {MAX_STOCKS} USA stocks")
+    usa_stocks = usa_stocks[:MAX_STOCKS]
 
 if len(forex_pairs) > MAX_FOREX:
     print(f"Limiting analysis to top {MAX_FOREX} forex pairs")
@@ -174,8 +174,10 @@ interval = "1d"  # Daily data for broader analysis
 # Technical indicator parameters
 sma_short = 20
 sma_long = 50
-ema_period = 20
-rsi_period = 14
+ema_short = 15  # For EMA crossover strategy
+ema_long = 30   # For EMA crossover strategy
+rsi_short = 10  # For RSI crossover strategy
+rsi_long = 20   # For RSI crossover strategy
 bb_period = 20
 macd_fast = 12
 macd_slow = 26
@@ -212,7 +214,8 @@ def calculate_indicators(df):
     # Moving Averages
     df['sma_short'] = close_series.rolling(sma_short).mean()
     df['sma_long'] = close_series.rolling(sma_long).mean()
-    df['ema'] = close_series.ewm(span=ema_period, adjust=False).mean()
+    df['ema_short'] = close_series.ewm(span=ema_short, adjust=False).mean()
+    df['ema_long'] = close_series.ewm(span=ema_long, adjust=False).mean()
     
     # Bollinger Bands
     df['bb_middle'] = close_series.rolling(bb_period).mean()
@@ -224,12 +227,18 @@ def calculate_indicators(df):
     delta = close_series.diff()
     gain = delta.where(delta > 0, 0)
     loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=rsi_period).mean()
-    avg_loss = loss.rolling(window=rsi_period).mean()
+    avg_gain = gain.rolling(window=rsi_short).mean()
+    avg_loss = loss.rolling(window=rsi_short).mean()
 
     # Calculate RS and RSI
     rs = avg_gain / avg_loss
-    df['rsi'] = 100 - (100 / (1 + rs))
+    df['rsi_short'] = 100 - (100 / (1 + rs))
+
+    # Calculate RS and RSI for longer period
+    avg_gain = gain.rolling(window=rsi_long).mean()
+    avg_loss = loss.rolling(window=rsi_long).mean()
+    rs = avg_gain / avg_loss
+    df['rsi_long'] = 100 - (100 / (1 + rs))
 
     # MACD (Moving Average Convergence Divergence)
     df['ema_fast'] = close_series.ewm(span=macd_fast, adjust=False).mean()
@@ -301,7 +310,8 @@ def calculate_performance_metrics(df, asset_type='stock'):
             metrics['above_sma20'] = False
 
         # Momentum metrics
-        metrics['rsi'] = df['rsi'].iloc[-1] if not pd.isna(df['rsi'].iloc[-1]) else 50
+        metrics['rsi_short'] = df['rsi_short'].iloc[-1] if not pd.isna(df['rsi_short'].iloc[-1]) else 50
+        metrics['rsi_long'] = df['rsi_long'].iloc[-1] if not pd.isna(df['rsi_long'].iloc[-1]) else 50
 
         # MACD metrics
         metrics['macd'] = df['macd'].iloc[-1] if not pd.isna(df['macd'].iloc[-1]) else 0
@@ -376,7 +386,8 @@ def calculate_performance_metrics(df, asset_type='stock'):
             'sharpe_ratio': 0,
             'above_sma50': False,
             'above_sma20': False,
-            'rsi': 50,
+            'rsi_short': 50,
+            'rsi_long': 50,
             'macd': 0,
             'macd_signal': 0,
             'macd_histogram': 0,
@@ -401,7 +412,7 @@ def screen_assets(all_data, asset_type='stock'):
 
     for ticker, df in all_data.items():
         # Skip if not enough data
-        if len(df) < max(sma_long, bb_period, rsi_period, 30):
+        if len(df) < max(sma_long, bb_period, 30):
             print(f"Not enough data for {ticker}, skipping...")
             continue
 
@@ -417,7 +428,7 @@ def screen_assets(all_data, asset_type='stock'):
         
         # Different name formatting for stocks vs forex
         if asset_type == 'stock':
-            metrics['name'] = ticker.split('.')[0]
+            metrics['name'] = ticker
         else:
             # Format forex pair names nicely (e.g., USD/INR instead of INR=X)
             if ticker.endswith('=X'):
@@ -513,14 +524,14 @@ def score_assets(results_df, asset_type='stock'):
 
     # RSI scoring
     df['rsi_score'] = 0
-    if 'rsi' in df.columns:
-        normal = (df['rsi'] >= 40) & (df['rsi'] <= 60)
+    if 'rsi_short' in df.columns:
+        normal = (df['rsi_short'] >= 40) & (df['rsi_short'] <= 60)
         df.loc[normal, 'rsi_score'] = 5
-        extreme = (df['rsi'] < 30) | (df['rsi'] > 70)
+        extreme = (df['rsi_short'] < 30) | (df['rsi_short'] > 70)
         df.loc[extreme, 'rsi_score'] = -5
-        buy = (df['rsi'] >= 30) & (df['rsi'] < 40)
+        buy = (df['rsi_short'] >= 30) & (df['rsi_short'] < 40)
         df.loc[buy, 'rsi_score'] = 10
-        sell = (df['rsi'] > 60) & (df['rsi'] <= 70)
+        sell = (df['rsi_short'] > 60) & (df['rsi_short'] <= 70)
         df.loc[sell, 'rsi_score'] = -10
 
     # Forex momentum scoring
@@ -585,7 +596,8 @@ def plot_asset(df, ticker, asset_name, asset_type='stock'):
 
     # RSI
     plt.subplot(4, 1, 2)
-    plt.plot(df.index, df['rsi'], label='RSI', color='purple')
+    plt.plot(df.index, df['rsi_short'], label='RSI (Short)', color='purple')
+    plt.plot(df.index, df['rsi_long'], label='RSI (Long)', color='blue')
     plt.axhline(y=70, color='r', linestyle='--', alpha=0.5)
     plt.axhline(y=30, color='g', linestyle='--', alpha=0.5)
     plt.title("Relative Strength Index (RSI)")
@@ -657,7 +669,7 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
         confidence = "MEDIUM"
         
         # RSI conditions
-        rsi = df['rsi'].iloc[-1]
+        rsi = df['rsi_short'].iloc[-1]
         
         # MACD conditions
         macd = df['macd'].iloc[-1]
@@ -745,10 +757,10 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
 # Main function
 def main():
     """Main function to run the stock and forex analysis"""
-    print("Starting Indian Stock and Forex Analysis...")
+    print("Starting USA Stock and Forex Analysis...")
     
-    # Download data for Indian stocks
-    stock_data = download_multiple_assets(indian_stocks, start_date, end_date, interval)
+    # Download data for USA stocks
+    stock_data = download_multiple_assets(usa_stocks, start_date, end_date, interval)
     
     # Calculate indicators for each stock
     stock_data_with_indicators = {}
@@ -795,7 +807,7 @@ def main():
     save_historical_data(stock_scored, forex_scored)
     
     # Simulate options/futures data (placeholder - you would replace with actual data)
-    options_today = generate_options_data()
+    options_today = generate_usa_options_data()
     
     print("Analysis complete!")
     
@@ -886,51 +898,79 @@ def update_history_index(date):
     with open(index_file, 'w') as f:
         json.dump(history_index, f, indent=4)
 
-def generate_options_data():
-    """Generate sample options/futures data (placeholder)"""
+def generate_usa_options_data():
+    """Generate sample USA options/futures data"""
     # This is a placeholder - you would replace with actual options data fetching
     options_data = [
         {
-            'symbol': 'NIFTY',
+            'symbol': 'SPY',  # S&P 500 ETF
             'expiry': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'),
-            'strike': 22000,
-            'call_price': 450.75,
-            'put_price': 380.25,
-            'call_oi': 12500,
-            'put_oi': 15800,
-            'call_volume': 3200,
-            'put_volume': 4100,
+            'strike': 480,
+            'call_price': 12.75,
+            'put_price': 10.25,
+            'call_oi': 125000,
+            'put_oi': 158000,
+            'call_volume': 32000,
+            'put_volume': 41000,
             'call_iv': 18.5,
             'put_iv': 19.2,
             'recommendation': 'Bullish'
         },
         {
-            'symbol': 'BANKNIFTY',
+            'symbol': 'QQQ',  # Nasdaq ETF
             'expiry': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'),
-            'strike': 48000,
-            'call_price': 850.50,
-            'put_price': 720.75,
-            'call_oi': 8500,
-            'put_oi': 9200,
-            'call_volume': 2100,
-            'put_volume': 2500,
+            'strike': 420,
+            'call_price': 15.50,
+            'put_price': 13.75,
+            'call_oi': 85000,
+            'put_oi': 92000,
+            'call_volume': 21000,
+            'put_volume': 25000,
             'call_iv': 20.2,
             'put_iv': 21.5,
             'recommendation': 'Neutral'
         },
         {
-            'symbol': 'RELIANCE',
+            'symbol': 'AAPL',  # Apple Inc.
             'expiry': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'),
-            'strike': 2800,
-            'call_price': 95.25,
-            'put_price': 85.50,
-            'call_oi': 5200,
-            'put_oi': 4800,
-            'call_volume': 1200,
-            'put_volume': 980,
+            'strike': 180,
+            'call_price': 6.25,
+            'put_price': 5.50,
+            'call_oi': 52000,
+            'put_oi': 48000,
+            'call_volume': 12000,
+            'put_volume': 9800,
             'call_iv': 22.8,
             'put_iv': 23.5,
             'recommendation': 'Bullish'
+        },
+        {
+            'symbol': 'MSFT',  # Microsoft
+            'expiry': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'),
+            'strike': 400,
+            'call_price': 11.25,
+            'put_price': 9.75,
+            'call_oi': 48000,
+            'put_oi': 42000,
+            'call_volume': 10500,
+            'put_volume': 8700,
+            'call_iv': 21.5,
+            'put_iv': 22.3,
+            'recommendation': 'Bullish'
+        },
+        {
+            'symbol': 'AMZN',  # Amazon
+            'expiry': (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d'),
+            'strike': 175,
+            'call_price': 7.50,
+            'put_price': 6.80,
+            'call_oi': 38000,
+            'put_oi': 35000,
+            'call_volume': 8500,
+            'put_volume': 7200,
+            'call_iv': 24.2,
+            'put_iv': 25.1,
+            'recommendation': 'Neutral'
         }
     ]
     return options_data
@@ -968,7 +1008,7 @@ def get_key_stocks_today():
         top_overall = stock_scored.head(5).to_dict(orient='records')
         
         # Get top 3 momentum stocks (highest RSI)
-        top_momentum = stock_scored.sort_values('rsi', ascending=False).head(3).to_dict(orient='records')
+        top_momentum = stock_scored.sort_values('rsi_short', ascending=False).head(3).to_dict(orient='records')
         
         # Get top 3 value stocks (lowest volatility with positive returns)
         positive_return = stock_scored[stock_scored['total_return'] > 0]
@@ -1060,14 +1100,14 @@ def backtest_strategy(ticker, data, start_date=None, end_date=None, initial_capi
     # 5. Backtesting loop
     for i in range(1, len(df)):
         # Current values as Python scalars
-        rsi_cur   = _val(df.at[df.index[i], 'rsi']) if 'rsi' in df.columns else None
+        rsi_cur   = _val(df.at[df.index[i], 'rsi_short']) if 'rsi_short' in df.columns else None
         macd_cur  = _val(df.at[df.index[i], 'macd']) if 'macd' in df.columns else None
         sig_cur   = _val(df.at[df.index[i], 'macd_signal']) if 'macd_signal' in df.columns else None
         close_cur = _val(df.at[df.index[i], 'Close'])
         sma20_cur = _val(df.at[df.index[i], 'sma_short']) if 'sma_short' in df.columns else None
 
         # Previous values
-        rsi_prev   = _val(df.at[df.index[i-1], 'rsi']) if 'rsi' in df.columns else None
+        rsi_prev   = _val(df.at[df.index[i-1], 'rsi_short']) if 'rsi_short' in df.columns else None
         macd_prev  = _val(df.at[df.index[i-1], 'macd']) if 'macd' in df.columns else None
         sig_prev   = _val(df.at[df.index[i-1], 'macd_signal']) if 'macd_signal' in df.columns else None
         close_prev = _val(df.at[df.index[i-1], 'Close'])
@@ -1236,45 +1276,6 @@ def plot_trading_performance(backtest_result, asset_type='stock'):
         plt.legend()
 
     # 2) Portfolio value
-    plt.subplot(3, 1, 2)
-    if 'portfolio_value' in df.columns:
-        plt.plot(df.index, df['portfolio_value'], label='Portfolio Value')
-
-    plt.title("Portfolio Value Over Time")
-    plt.ylabel("Value (₹)" if asset_type == 'stock' else "Value")
-    plt.grid(True)
-    handles, labels = plt.gca().get_legend_handles_labels()
-    if handles:
-        plt.legend()
-
-    # 3) Strategy vs Buy & Hold returns
-    plt.subplot(3, 1, 3)
-    if 'strategy_cum_return' in df.columns:
-        plt.plot(df.index, df['strategy_cum_return'] * 100,
-                 label='Strategy Return')
-    if 'buy_hold_cum_return' in df.columns:
-        plt.plot(df.index, df['buy_hold_cum_return'] * 100,
-                 label='Buy & Hold Return')
-
-    plt.title("Strategy vs Buy & Hold Returns")
-    plt.ylabel("Return (%)")
-    plt.grid(True)
-    handles, labels = plt.gca().get_legend_handles_labels()
-    if handles:
-        plt.legend()
-
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.9)
-    plt.show()
-
-# Run the main program directly if needed for testing
-if __name__ == "__main__":
-    results = main()
-    print("Analysis completed successfully.")
-    print(f"Found {len(results['stock_scored'])} scored stocks.")
-    print(f"Found {len(results['forex_scored'])} forex pairs.")
-    print(f"Generated {len(results['options_today'])} options recommendations.")
-
     plt.subplot(3, 1, 2)
     if 'portfolio_value' in df.columns:
         plt.plot(df.index, df['portfolio_value'], label='Portfolio Value')

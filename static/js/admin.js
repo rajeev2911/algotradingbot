@@ -85,7 +85,7 @@ function loadDashboardData() {
             if (data && data.length > 0) {
                 // Update top stock card
                 $('#top-stock-name').text(data[0].name || data[0].ticker);
-                $('#top-stock-price').text('₹' + (data[0].current_price || 0).toFixed(2));
+                $('#top-stock-price').text('$' + (data[0].current_price || 0).toFixed(2));
                 
                 // Update key stocks table
                 updateKeyStocksTable(data);
@@ -117,7 +117,7 @@ function loadDashboardData() {
             if (data && data.length > 0) {
                 // Update top forex card
                 $('#top-forex-name').text(data[0].name || data[0].ticker);
-                $('#top-forex-price').text((data[0].current_price || 0).toFixed(4));
+                $('#top-forex-price').text('$' + (data[0].current_price || 0).toFixed(4));
                 
                 // Create forex chart
                 createForexChart(data);
@@ -236,7 +236,7 @@ function updateTopStocksTable(data) {
         html += `<tr>
             <td>${stock.ticker}</td>
             <td>${stock.name || ''}</td>
-            <td>₹${(stock.current_price || 0).toFixed(2)}</td>
+            <td>$${(stock.current_price || 0).toFixed(2)}</td>
             <td>${(stock.total_return * 100 || 0).toFixed(2)}%</td>
             <td>${(stock.recent_30d_return * 100 || 0).toFixed(2)}%</td>
             <td>${(stock.rsi || 0).toFixed(1)}</td>
@@ -273,7 +273,7 @@ function updateKeyStocksTable(data) {
         html += `<tr>
             <td>${stock.ticker}</td>
             <td>${stock.name || ''}</td>
-            <td>₹${(stock.current_price || 0).toFixed(2)}</td>
+            <td>$${(stock.current_price || 0).toFixed(2)}</td>
             <td>${(stock.total_return * 100 || 0).toFixed(2)}%</td>
             <td>${(stock.rsi || 0).toFixed(1)}</td>
             <td>${(stock.macd || 0).toFixed(2)}</td>
@@ -316,12 +316,12 @@ function displayStockDetails(data) {
     
     // Update details
     $('#stock-details-name').text(data.name);
-    $('#detail-price').text(`₹${data.last_price.toFixed(2)}`);
+    $('#detail-price').text(`$${data.last_price.toFixed(2)}`);
     $('#detail-change').text(`${data.change_percent.toFixed(2)}%`);
     $('#detail-rsi').text(data.indicators.rsi.toFixed(2));
     $('#detail-macd').text(data.indicators.macd.toFixed(2));
-    $('#detail-sma20').text(`₹${data.indicators.sma_20.toFixed(2)}`);
-    $('#detail-sma50').text(`₹${data.indicators.sma_50.toFixed(2)}`);
+    $('#detail-sma20').text(`$${data.indicators.sma_20.toFixed(2)}`);
+    $('#detail-sma50').text(`$${data.indicators.sma_50.toFixed(2)}`);
     
     // Create chart
     createStockDetailChart(data);
@@ -426,8 +426,8 @@ function updateOptionsTable(data) {
             <td>${option.symbol}</td>
             <td>${option.expiry}</td>
             <td>${option.strike}</td>
-            <td>${option.call_price.toFixed(2)}</td>
-            <td>${option.put_price.toFixed(2)}</td>
+            <td>$${option.call_price.toFixed(2)}</td>
+            <td>$${option.put_price.toFixed(2)}</td>
             <td>${option.call_oi.toLocaleString()}</td>
             <td>${option.put_oi.toLocaleString()}</td>
             <td>${option.call_iv.toFixed(1)}%</td>
@@ -502,7 +502,7 @@ function displayHistoricalData(index) {
             html += `<tr>
                 <td>${stock.ticker}</td>
                 <td>${stock.name || ''}</td>
-                <td>₹${(stock.current_price || 0).toFixed(2)}</td>
+                <td>$${(stock.current_price || 0).toFixed(2)}</td>
                 <td>${(stock.total_return * 100 || 0).toFixed(2)}%</td>
                 <td>${(stock.total_score || 0).toFixed(1)}</td>
             </tr>`;
