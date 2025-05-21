@@ -940,21 +940,53 @@ def get_key_stocks_today():
     results = main()
     stock_scored = results['stock_scored']
     
-    # Get top 5 stocks by overall score
-    top_overall = stock_scored.head(5).to_dict(orient='records')
+    # Handle empty DataFrame case
+    if stock_scored is None or len(stock_scored) == 0:
+        return {
+            'top_overall': [],
+            'top_momentum': [],
+            'top_value': []
+        }
     
-    # Get top 3 momentum stocks (highest RSI)
-    top_momentum = stock_scored.sort_values('rsi', ascending=False).head(3).to_dict(orient='records')
+    # Ensure all values are JSON serializable
+    def ensure_serializable(data):
+        if isinstance(data, pd.DataFrame):
+            return data.to_dict(orient='records')
+        elif isinstance(data, pd.Series):
+            return data.to_dict()
+        elif isinstance(data, (np.int64, np.float64, np.bool_)):
+            return data.item()
+        elif isinstance(data, list):
+            return [ensure_serializable(item) for item in data]
+        elif isinstance(data, dict):
+            return {k: ensure_serializable(v) for k, v in data.items()}
+        else:
+            return data
     
-    # Get top 3 value stocks (lowest volatility with positive returns)
-    positive_return = stock_scored[stock_scored['total_return'] > 0]
-    top_value = positive_return.sort_values('volatility').head(3).to_dict(orient='records')
-    
-    return {
-        'top_overall': top_overall,
-        'top_momentum': top_momentum,
-        'top_value': top_value
-    }
+    try:
+        # Get top 5 stocks by overall score
+        top_overall = stock_scored.head(5).to_dict(orient='records')
+        
+        # Get top 3 momentum stocks (highest RSI)
+        top_momentum = stock_scored.sort_values('rsi', ascending=False).head(3).to_dict(orient='records')
+        
+        # Get top 3 value stocks (lowest volatility with positive returns)
+        positive_return = stock_scored[stock_scored['total_return'] > 0]
+        top_value = positive_return.sort_values('volatility').head(3).to_dict(orient='records')
+        
+        # Ensure everything is JSON serializable
+        return {
+            'top_overall': ensure_serializable(top_overall),
+            'top_momentum': ensure_serializable(top_momentum),
+            'top_value': ensure_serializable(top_value)
+        }
+    except Exception as e:
+        print(f"Error in get_key_stocks_today: {e}")
+        return {
+            'top_overall': [],
+            'top_momentum': [],
+            'top_value': []
+        }
 
 def get_historical_data(days=7):
     """Get historical data for the past N days"""
