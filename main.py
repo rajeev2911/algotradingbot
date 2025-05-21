@@ -150,13 +150,69 @@ def get_forex_pairs(use_cache=True, cache_days=1):
             "USDCHF=X", "NZDUSD=X", "EURGBP=X", "EURJPY=X", "USDCNY=X"
         ]
 
+def get_comex_commodities(use_cache=True, cache_days=1):
+    """
+    Get a list of COMEX commodities available on Yahoo Finance
+    """
+    cache_file = os.path.join(CACHE_DIR, 'comex_commodities.pkl')
+    
+    # Check if cache exists and is recent
+    if use_cache and os.path.exists(cache_file):
+        modified_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+        if datetime.now() - modified_time < timedelta(days=cache_days):
+            try:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+            except:
+                pass  # If cache loading fails, fetch fresh data
+    
+    try:
+        # List of COMEX commodities with Yahoo Finance tickers
+        commodities = [
+            "GC=F",   # Gold Futures
+            "SI=F",   # Silver Futures
+            "HG=F",   # Copper Futures
+            "PL=F",   # Platinum Futures
+            "PA=F",   # Palladium Futures
+            "CL=F",   # Crude Oil WTI Futures
+            "NG=F",   # Natural Gas Futures
+            "ZC=F",   # Corn Futures
+            "ZS=F",   # Soybean Futures
+            "ZW=F",   # Wheat Futures
+            "KC=F",   # Coffee Futures
+            "CT=F",   # Cotton Futures
+            "LBS=F",  # Lumber Futures
+            "CC=F",   # Cocoa Futures
+            "SB=F"    # Sugar Futures
+        ]
+        
+        # Cache the results
+        with open(cache_file, 'wb') as f:
+            pickle.dump(commodities, f)
+        
+        return commodities
+    
+    except Exception as e:
+        print(f"Error creating COMEX commodities list: {e}")
+        # Fallback to default list
+        return [
+            "GC=F",   # Gold Futures
+            "SI=F",   # Silver Futures
+            "HG=F",   # Copper Futures
+            "PL=F",   # Platinum Futures
+            "CL=F",   # Crude Oil WTI Futures
+            "NG=F"    # Natural Gas Futures
+        ]
+
 # Use dynamic lists instead of hardcoded ones
 usa_stocks = get_usa_stocks()
 forex_pairs = get_forex_pairs()
+comex_commodities = get_comex_commodities()
 
 # Limit the number of stocks/pairs to analyze if needed (to avoid API limits)
 MAX_STOCKS = 50  # Adjust based on your needs
 MAX_FOREX = 20   # Adjust based on your needs
+MAX_COMEX = 10   # Adjust based on your needs
 
 if len(usa_stocks) > MAX_STOCKS:
     print(f"Limiting analysis to top {MAX_STOCKS} USA stocks")
@@ -165,6 +221,10 @@ if len(usa_stocks) > MAX_STOCKS:
 if len(forex_pairs) > MAX_FOREX:
     print(f"Limiting analysis to top {MAX_FOREX} forex pairs")
     forex_pairs = forex_pairs[:MAX_FOREX]
+
+if len(comex_commodities) > MAX_COMEX:
+    print(f"Limiting analysis to top {MAX_COMEX} COMEX commodities")
+    comex_commodities = comex_commodities[:MAX_COMEX]
 
 # Analysis parameters
 end_date = date.today()
@@ -754,6 +814,341 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
     signals_df = pd.DataFrame(signals)
     return signals_df
 
+# Trading Strategy 1: EMA Crossover with Volume Breakout
+def ema_crossover_with_volume_breakout(df):
+    """
+    Trading strategy based on EMA crossover (15 & 30 bars) with volume breakout
+    
+    Parameters:
+    df (DataFrame): DataFrame with price and volume data
+    
+    Returns:
+    DataFrame: Original DataFrame with added signal column
+    """
+    if df is None or df.empty or len(df) < 30:
+        return df
+    
+    # Make a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Calculate EMAs if they don't exist
+    if 'ema_15' not in result_df.columns:
+        result_df['ema_15'] = result_df['Close'].ewm(span=15, adjust=False).mean()
+    if 'ema_30' not in result_df.columns:
+        result_df['ema_30'] = result_df['Close'].ewm(span=30, adjust=False).mean()
+    
+    # Calculate average volume
+    result_df['avg_volume'] = result_df['Volume'].rolling(window=20).mean()
+    
+    # Initialize signal column
+    result_df['ema_crossover_signal'] = 'NEUTRAL'
+    
+    # Calculate signals row by row to avoid Series comparison issues
+    for i in range(30, len(result_df)):
+        # Safely extract scalar values from Series to avoid ambiguous truth value errors
+        ema_15_current = float(result_df['ema_15'].iloc[i])
+        ema_30_current = float(result_df['ema_30'].iloc[i])
+        ema_15_prev = float(result_df['ema_15'].iloc[i-1])
+        ema_30_prev = float(result_df['ema_30'].iloc[i-1])
+        
+        # Check if current row's EMA 15 is above EMA 30
+        ema_15_above = ema_15_current > ema_30_current
+        # Check if previous row's EMA 15 was below EMA 30
+        prev_ema_15_below = ema_15_prev <= ema_30_prev
+        # Check if current row's EMA 15 is below EMA 30
+        ema_15_below = ema_15_current < ema_30_current
+        # Check if previous row's EMA 15 was above EMA 30
+        prev_ema_15_above = ema_15_prev >= ema_30_prev
+        
+        # Volume breakout condition (volume > 1.5x average)
+        volume_current = float(result_df['Volume'].iloc[i])
+        avg_volume = float(result_df['avg_volume'].iloc[i])
+        volume_breakout = volume_current > 1.5 * avg_volume
+        
+        # Buy signal: EMA 15 crosses above EMA 30 with volume breakout
+        if ema_15_above and prev_ema_15_below and volume_breakout:
+            result_df.loc[result_df.index[i], 'ema_crossover_signal'] = 'BUY'
+        # Sell signal: EMA 15 crosses below EMA 30 with volume breakout
+        elif ema_15_below and prev_ema_15_above and volume_breakout:
+            result_df.loc[result_df.index[i], 'ema_crossover_signal'] = 'SELL'
+    
+    return result_df
+
+# Trading Strategy 2: RSI Crossover with Bollinger Bands
+def rsi_crossover_with_bollinger_bands(df):
+    """
+    Trading strategy based on RSI crossover (10 & 20 bars) with Bollinger Bands
+    
+    Parameters:
+    df (DataFrame): DataFrame with price data
+    
+    Returns:
+    DataFrame: Original DataFrame with added signal column
+    """
+    if df is None or df.empty or len(df) < 30:
+        return df
+    
+    # Make a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Calculate RSIs if they don't exist
+    if 'rsi_10' not in result_df.columns:
+        delta = result_df['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=10).mean()
+        avg_loss = loss.rolling(window=10).mean()
+        rs = avg_gain / avg_loss.replace(0, 0.001)  # Avoid division by zero
+        result_df['rsi_10'] = 100 - (100 / (1 + rs))
+    
+    if 'rsi_20' not in result_df.columns:
+        delta = result_df['Close'].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(window=20).mean()
+        avg_loss = loss.rolling(window=20).mean()
+        rs = avg_gain / avg_loss.replace(0, 0.001)  # Avoid division by zero
+        result_df['rsi_20'] = 100 - (100 / (1 + rs))
+    
+    # Calculate Bollinger Bands if they don't exist
+    if 'bb_middle' not in result_df.columns:
+        result_df['bb_middle'] = result_df['Close'].rolling(window=20).mean()
+        result_df['bb_std'] = result_df['Close'].rolling(window=20).std()
+        result_df['bb_upper'] = result_df['bb_middle'] + 2 * result_df['bb_std']
+        result_df['bb_lower'] = result_df['bb_middle'] - 2 * result_df['bb_std']
+    
+    # Initialize signal column
+    result_df['rsi_bb_signal'] = 'NEUTRAL'
+    
+    # Calculate signals row by row to avoid Series comparison issues
+    for i in range(30, len(result_df)):
+        # Safely extract scalar values from Series to avoid ambiguous truth value errors
+        rsi_10_current = float(result_df['rsi_10'].iloc[i])
+        rsi_20_current = float(result_df['rsi_20'].iloc[i])
+        rsi_10_prev = float(result_df['rsi_10'].iloc[i-1])
+        rsi_20_prev = float(result_df['rsi_20'].iloc[i-1])
+        
+        # Check if current row's RSI 10 is above RSI 20
+        rsi_10_above = rsi_10_current > rsi_20_current
+        # Check if previous row's RSI 10 was below RSI 20
+        prev_rsi_10_below = rsi_10_prev <= rsi_20_prev
+        # Check if current row's RSI 10 is below RSI 20
+        rsi_10_below = rsi_10_current < rsi_20_current
+        # Check if previous row's RSI 10 was above RSI 20
+        prev_rsi_10_above = rsi_10_prev >= rsi_20_prev
+        
+        # Bollinger Band conditions
+        price = float(result_df['Close'].iloc[i])
+        bb_upper = float(result_df['bb_upper'].iloc[i])
+        bb_lower = float(result_df['bb_lower'].iloc[i])
+        
+        # Buy signal: RSI 10 crosses above RSI 20 and price is near lower Bollinger Band
+        if rsi_10_above and prev_rsi_10_below and price < (bb_lower * 1.02):  # Within 2% of lower band
+            result_df.loc[result_df.index[i], 'rsi_bb_signal'] = 'BUY'
+        # Sell signal: RSI 10 crosses below RSI 20 and price is near upper Bollinger Band
+        elif rsi_10_below and prev_rsi_10_above and price > (bb_upper * 0.98):  # Within 2% of upper band
+            result_df.loc[result_df.index[i], 'rsi_bb_signal'] = 'SELL'
+    
+    return result_df
+
+# Trading Strategy 3: Standard Deviation Crossover
+def standard_deviation_crossover(df):
+    """
+    Trading strategy based on Standard Deviation Crossover on different time frames
+    
+    Parameters:
+    df (DataFrame): DataFrame with price data
+    
+    Returns:
+    DataFrame: Original DataFrame with added signal column
+    """
+    if df is None or df.empty or len(df) < 35:
+        return df
+    
+    # Make a copy to avoid modifying the original
+    result_df = df.copy()
+    
+    # Calculate standard deviations for different time frames
+    result_df['std_10'] = result_df['Close'].rolling(window=10).std()
+    result_df['std_30'] = result_df['Close'].rolling(window=30).std()
+    
+    # Calculate ratio of short-term to long-term volatility
+    result_df['std_ratio'] = result_df['std_10'] / result_df['std_30'].replace(0, 0.001)  # Avoid division by zero
+    
+    # Calculate moving average of the ratio to smooth it
+    result_df['std_ratio_ma'] = result_df['std_ratio'].rolling(window=5).mean()
+    
+    # Initialize signal column
+    result_df['std_crossover_signal'] = 'NEUTRAL'
+    
+    # Calculate signals row by row to avoid Series comparison issues
+    for i in range(35, len(result_df)):
+        # Safely extract scalar values from Series to avoid ambiguous truth value errors
+        std_ratio_current = float(result_df['std_ratio'].iloc[i])
+        std_ratio_prev = float(result_df['std_ratio'].iloc[i-1])
+        price_current = float(result_df['Close'].iloc[i])
+        price_prev = float(result_df['Close'].iloc[i-5])
+        
+        # Check if volatility is increasing (short-term std > long-term std)
+        volatility_increasing = std_ratio_current > 1.2  # 20% higher volatility
+        
+        # Check if volatility was previously decreasing
+        prev_volatility_decreasing = std_ratio_prev <= 1.2
+        
+        # Check if volatility is decreasing (short-term std < long-term std)
+        volatility_decreasing = std_ratio_current < 0.8  # 20% lower volatility
+        
+        # Check if volatility was previously increasing
+        prev_volatility_increasing = std_ratio_prev >= 0.8
+        
+        # Check price trend
+        price_increasing = price_current > price_prev
+        
+        # Buy signal: Volatility starts increasing during uptrend
+        if volatility_increasing and prev_volatility_decreasing and price_increasing:
+            result_df.loc[result_df.index[i], 'std_crossover_signal'] = 'BUY'
+        # Sell signal: Volatility starts decreasing during downtrend
+        elif volatility_decreasing and prev_volatility_increasing and not price_increasing:
+            result_df.loc[result_df.index[i], 'std_crossover_signal'] = 'SELL'
+    
+    return result_df
+
+# Update generate_trading_signals function to use the new strategies
+def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
+    """Generate trading signals for top performing assets using multiple strategies"""
+    signals = []
+    
+    for i in range(min(top_n, len(results_df))):
+        try:
+            ticker = results_df['ticker'].iloc[i]
+            asset_name = results_df['name'].iloc[i]
+            asset_type_val = asset_type if asset_type is not None else results_df['asset_type'].iloc[i]
+            
+            if ticker not in all_data:
+                continue
+                
+            df = calculate_indicators(all_data[ticker])
+            
+            # Apply the three trading strategies
+            df = ema_crossover_with_volume_breakout(df)
+            df = rsi_crossover_with_bollinger_bands(df)
+            df = standard_deviation_crossover(df)
+            
+            # Current price
+            current_price = float(df['Close'].iloc[-1])
+            
+            # Signal strength (0-100)
+            signal_strength = min(100, max(0, float(results_df['total_score'].iloc[i])))
+            
+            # Determine signal type based on indicators
+            signal_type = "NEUTRAL"
+            confidence = "MEDIUM"
+            
+            # Get signals from our strategies
+            ema_signal = df['ema_crossover_signal'].iloc[-1] if 'ema_crossover_signal' in df.columns else 'NEUTRAL'
+            rsi_signal = df['rsi_bb_signal'].iloc[-1] if 'rsi_bb_signal' in df.columns else 'NEUTRAL'
+            std_signal = df['std_crossover_signal'].iloc[-1] if 'std_crossover_signal' in df.columns else 'NEUTRAL'
+            
+            # Count buy and sell signals from our strategies
+            buy_signals = sum(1 for signal in [ema_signal, rsi_signal, std_signal] if signal == 'BUY')
+            sell_signals = sum(1 for signal in [ema_signal, rsi_signal, std_signal] if signal == 'SELL')
+            
+            # RSI conditions
+            rsi = float(df['rsi_short'].iloc[-1])
+            
+            # MACD conditions
+            macd = float(df['macd'].iloc[-1])
+            macd_signal = float(df['macd_signal'].iloc[-1])
+            macd_hist = float(df['macd_histogram'].iloc[-1])
+            
+            # Golden/Death cross
+            golden_cross_recent = bool(results_df['golden_cross_last_30d'].iloc[i])
+            death_cross_recent = bool(results_df['death_cross_last_30d'].iloc[i])
+            
+            # Trend conditions
+            above_sma20 = bool(results_df['above_sma20'].iloc[i])
+            above_sma50 = bool(results_df['above_sma50'].iloc[i])
+            
+            # Check for bullish signals
+            bullish_signals = 0
+            if rsi > 50 and rsi < 70:
+                bullish_signals += 1
+            if macd > 0:
+                bullish_signals += 1
+            if macd > macd_signal:
+                bullish_signals += 1
+            if golden_cross_recent:
+                bullish_signals += 2
+            if above_sma20 and above_sma50:
+                bullish_signals += 2
+                
+            # Check for bearish signals
+            bearish_signals = 0
+            if rsi < 50 and rsi > 30:
+                bearish_signals += 1
+            if macd < 0:
+                bearish_signals += 1
+            if macd < macd_signal:
+                bearish_signals += 1
+            if death_cross_recent:
+                bearish_signals += 2
+            if not above_sma20 and not above_sma50:
+                bearish_signals += 2
+            
+            # Add our strategy signals to the count
+            bullish_signals += buy_signals
+            bearish_signals += sell_signals
+                
+            # Strong buy/sell signals
+            if buy_signals >= 2 or (rsi < 30 and macd > macd_signal):
+                signal_type = "STRONG BUY"
+                confidence = "HIGH"
+            elif sell_signals >= 2 or (rsi > 70 and macd < macd_signal):
+                signal_type = "STRONG SELL"
+                confidence = "HIGH"
+            # Regular buy/sell based on signal count
+            elif bullish_signals >= 4:
+                signal_type = "BUY"
+                confidence = "HIGH" if bullish_signals >= 5 else "MEDIUM"
+            elif bearish_signals >= 4:
+                signal_type = "SELL"
+                confidence = "HIGH" if bearish_signals >= 5 else "MEDIUM"
+            elif bullish_signals >= 3:
+                signal_type = "BUY"
+                confidence = "LOW"
+            elif bearish_signals >= 3:
+                signal_type = "SELL"
+                confidence = "LOW"
+                
+            # Create signal dictionary
+            signal = {
+                'ticker': ticker,
+                'name': asset_name,
+                'asset_type': asset_type_val,
+                'current_price': current_price,
+                'signal': signal_type,
+                'confidence': confidence,
+                'rsi': rsi,
+                'macd': macd,
+                'signal_strength': signal_strength,
+                'above_sma20': above_sma20,
+                'above_sma50': above_sma50,
+                'golden_cross_recent': golden_cross_recent,
+                'death_cross_recent': death_cross_recent,
+                'ema_crossover_signal': ema_signal,
+                'rsi_bb_signal': rsi_signal,
+                'std_crossover_signal': std_signal
+            }
+            
+            signals.append(signal)
+        except Exception as e:
+            print(f"Error generating signals for asset {i}: {e}")
+            continue
+    
+    # Convert to DataFrame
+    signals_df = pd.DataFrame(signals)
+    return signals_df
+
 # Main function
 def main():
     """Main function to run the stock and forex analysis"""
@@ -789,6 +1184,21 @@ def main():
     # Score and rank forex pairs
     forex_scored = score_assets(forex_results, asset_type='forex')
     
+    # Download data for COMEX commodities
+    comex_data = download_multiple_assets(comex_commodities, start_date, end_date, interval)
+    
+    # Calculate indicators for each COMEX commodity
+    comex_data_with_indicators = {}
+    for ticker, df in comex_data.items():
+        if len(df) > 0:
+            comex_data_with_indicators[ticker] = calculate_indicators(df)
+    
+    # Screen COMEX commodities based on technical criteria
+    comex_results = screen_assets(comex_data_with_indicators, asset_type='comex')
+    
+    # Score and rank COMEX commodities
+    comex_scored = score_assets(comex_results, asset_type='comex')
+    
     # Generate trading signals for top stocks
     top_stock_tickers = stock_scored.head(5).index.tolist()
     stock_signals = generate_trading_signals(stock_data_with_indicators, stock_scored, top_n=5)
@@ -797,14 +1207,21 @@ def main():
     top_forex_tickers = forex_scored.head(5).index.tolist()
     forex_signals = generate_trading_signals(forex_data_with_indicators, forex_scored, top_n=5, asset_type='forex')
     
+    # Generate trading signals for top COMEX commodities
+    top_comex_tickers = comex_scored.head(5).index.tolist()
+    comex_signals = generate_trading_signals(comex_data_with_indicators, comex_scored, top_n=5, asset_type='comex')
+    
     # Run trading simulation on top stocks
     stock_simulation = run_algo_trading_simulation(stock_data_with_indicators, top_stock_tickers, initial_capital=100000, asset_type='stock')
     
     # Run trading simulation on top forex pairs
     forex_simulation = run_algo_trading_simulation(forex_data_with_indicators, top_forex_tickers, initial_capital=100000, asset_type='forex')
     
+    # Run trading simulation on top COMEX commodities
+    comex_simulation = run_algo_trading_simulation(comex_data_with_indicators, top_comex_tickers, initial_capital=100000, asset_type='comex')
+    
     # Save historical data for tracking
-    save_historical_data(stock_scored, forex_scored)
+    save_historical_data(stock_scored, forex_scored, comex_scored)
     
     # Simulate options/futures data (placeholder - you would replace with actual data)
     options_today = generate_usa_options_data()
@@ -818,14 +1235,19 @@ def main():
         'forex_data': forex_data_with_indicators,
         'forex_results': forex_results,
         'forex_scored': forex_scored,
+        'comex_data': comex_data_with_indicators,
+        'comex_results': comex_results,
+        'comex_scored': comex_scored,
         'stock_signals': stock_signals,
         'forex_signals': forex_signals,
+        'comex_signals': comex_signals,
         'stock_simulation': stock_simulation,
         'forex_simulation': forex_simulation,
+        'comex_simulation': comex_simulation,
         'options_today': options_today
     }
 
-def save_historical_data(stock_data, forex_data):
+def save_historical_data(stock_data, forex_data, comex_data):
     """Save today's top stocks and forex data for historical tracking"""
     today = datetime.now().strftime('%Y-%m-%d')
     
@@ -859,12 +1281,14 @@ def save_historical_data(stock_data, forex_data):
     # Convert data to JSON-safe format
     top_stocks = convert_to_json_safe(stock_data)
     top_forex = convert_to_json_safe(forex_data)
+    top_comex = convert_to_json_safe(comex_data)
     
     # Create history entry
     history_entry = {
         'date': today,
         'top_stocks': top_stocks,
-        'top_forex': top_forex
+        'top_forex': top_forex,
+        'top_comex': top_comex
     }
     
     # Save to JSON file
@@ -1313,4 +1737,5 @@ if __name__ == "__main__":
     print("Analysis completed successfully.")
     print(f"Found {len(results['stock_scored'])} scored stocks.")
     print(f"Found {len(results['forex_scored'])} forex pairs.")
+    print(f"Found {len(results['comex_scored'])} COMEX commodities.")
     print(f"Generated {len(results['options_today'])} options recommendations.")

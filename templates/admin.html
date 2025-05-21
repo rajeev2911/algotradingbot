@@ -40,6 +40,11 @@
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" href="#comex" data-bs-toggle="tab">
+                                <i class="fas fa-coins me-2"></i> COMEX Commodities
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" href="#futures-options" data-bs-toggle="tab">
                                 <i class="fas fa-file-contract me-2"></i> Futures & Options
                             </a>
@@ -95,16 +100,16 @@
                                     <div class="card-body">
                                         <h5 class="card-title">Top Forex</h5>
                                         <h3 class="card-text" id="top-forex-name">Loading...</h3>
-                                        <p class="card-text" id="top-forex-price">0.0000</p>
+                                        <p class="card-text" id="top-forex-price">$0.00</p>
                                     </div>
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <div class="card text-white bg-warning">
                                     <div class="card-body">
-                                        <h5 class="card-title">Key Future</h5>
-                                        <h3 class="card-text" id="key-future-name">Loading...</h3>
-                                        <p class="card-text" id="key-future-rec">Neutral</p>
+                                        <h5 class="card-title">Top Commodity</h5>
+                                        <h3 class="card-text" id="top-comex-name">Loading...</h3>
+                                        <p class="card-text" id="top-comex-price">$0.00</p>
                                     </div>
                                 </div>
                             </div>
@@ -113,7 +118,7 @@
                                     <div class="card-body">
                                         <h5 class="card-title">Market Trend</h5>
                                         <h3 class="card-text" id="market-trend">Loading...</h3>
-                                        <p class="card-text" id="market-trend-desc">Analyzing...</p>
+                                        <p class="card-text" id="market-trend-desc">0 bullish, 0 bearish</p>
                                     </div>
                                 </div>
                             </div>
@@ -327,6 +332,113 @@
                                     </div>
                                     <div class="col-md-6">
                                         <canvas id="forexVolatilityChart" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- COMEX Commodities Tab -->
+                    <div class="tab-pane fade" id="comex">
+                        <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+                            <h1 class="h2">COMEX Commodities</h1>
+                            <div class="btn-toolbar mb-2 mb-md-0">
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="refresh-comex">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5>Top Performing Commodities</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Ticker</th>
+                                                <th>Name</th>
+                                                <th>Price ($)</th>
+                                                <th>Total Return (%)</th>
+                                                <th>30d Return (%)</th>
+                                                <th>RSI</th>
+                                                <th>MACD</th>
+                                                <th>Signal</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="top-comex-table">
+                                            <tr>
+                                                <td colspan="8" class="text-center">Loading data...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="card mb-4">
+                                    <div class="card-header">
+                                        <h5>Commodity Performance</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="comex-performance-chart" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="card mb-4">
+                                    <div class="card-header">
+                                        <h5>Commodity Volatility</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="comex-volatility-chart" height="300"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card mb-4" id="comex-details-card" style="display: none;">
+                            <div class="card-header">
+                                <h5>Commodity Details: <span id="comex-details-name"></span></h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <table class="table table-sm">
+                                            <tbody>
+                                                <tr>
+                                                    <th>Current Price:</th>
+                                                    <td id="comex-detail-price">$0.00</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>Change (%):</th>
+                                                    <td id="comex-detail-change">0.00%</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>RSI:</th>
+                                                    <td id="comex-detail-rsi">0.00</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>MACD:</th>
+                                                    <td id="comex-detail-macd">0.00</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>SMA (20):</th>
+                                                    <td id="comex-detail-sma20">$0.00</td>
+                                                </tr>
+                                                <tr>
+                                                    <th>SMA (50):</th>
+                                                    <td id="comex-detail-sma50">$0.00</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <canvas id="comex-detail-chart" height="250"></canvas>
                                     </div>
                                 </div>
                             </div>

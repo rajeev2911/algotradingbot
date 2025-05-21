@@ -5,6 +5,7 @@ let stocksData = [];
 let forexData = [];
 let optionsData = [];
 let historyData = [];
+let comexData = []; // New variable for COMEX data
 let charts = {};
 
 // Document ready function
@@ -27,6 +28,9 @@ function initAdminPanel() {
     // Load forex data
     loadTopForex();
     
+    // Load COMEX commodities data
+    loadTopComex();
+    
     // Load options data
     loadKeyFutures();
     
@@ -47,6 +51,10 @@ function setupEventListeners() {
     
     $('#refresh-forex').click(function() {
         loadTopForex();
+    });
+    
+    $('#refresh-comex').click(function() {
+        loadTopComex();
     });
     
     $('#refresh-options').click(function() {
@@ -72,7 +80,7 @@ function loadDashboardData() {
     // Show loading indicators
     $('#top-stock-name').text('Loading...');
     $('#top-forex-name').text('Loading...');
-    $('#key-future-name').text('Loading...');
+    $('#top-comex-name').text('Loading...');
     $('#market-trend').text('Loading...');
     
     // Load top stocks
@@ -126,6 +134,35 @@ function loadDashboardData() {
         error: function(xhr, status, error) {
             console.error('Error loading top forex:', status, error);
             $('#top-forex-name').text('Error loading data');
+            
+            // Check if we need to reload the page due to server restart
+            if (xhr.status === 0) {
+                setTimeout(function() {
+                    window.location.reload();
+                }, 5000);
+            }
+        }
+    });
+    
+    // Load top COMEX commodities
+    $.ajax({
+        url: '/api/top-comex',
+        method: 'GET',
+        dataType: 'json',
+        timeout: 30000, // 30 second timeout
+        success: function(data) {
+            if (data && data.length > 0) {
+                // Update top commodity card
+                $('#top-comex-name').text(data[0].name || data[0].ticker);
+                $('#top-comex-price').text('$' + (data[0].current_price || 0).toFixed(2));
+                
+                // Create COMEX chart
+                createComexChart(data);
+            }
+        },
+        error: function(xhr, status, error) {
+            console.error('Error loading top COMEX commodities:', status, error);
+            $('#top-comex-name').text('Error loading data');
             
             // Check if we need to reload the page due to server restart
             if (xhr.status === 0) {
@@ -530,6 +567,96 @@ function displayHistoricalData(index) {
     }
 }
 
+// Load top COMEX commodities data
+function loadTopComex() {
+    $.ajax({
+        url: '/api/top-comex',
+        method: 'GET',
+        dataType: 'json',
+        timeout: 30000, // 30 second timeout
+        success: function(data) {
+            comexData = data;
+            updateTopComexTable(data);
+            createComexPerformanceCharts(data);
+        },
+        error: function(xhr, status, error) {
+            console.error('Error loading COMEX data:', status, error);
+            $('#top-comex-table').html('<tr><td colspan="8" class="text-center">Error loading data</td></tr>');
+            
+            // Check if we need to reload the page due to server restart
+            if (xhr.status === 0) {
+                setTimeout(function() {
+                    window.location.reload();
+                }, 5000);
+            }
+        }
+    });
+}
+
+// Update top COMEX commodities table
+function updateTopComexTable(data) {
+    // Clear existing table rows
+    $('#top-comex-table').empty();
+    
+    // Add new rows
+    $.each(data, function(i, commodity) {
+        var row = '<tr>';
+        row += '<td><a href="#" class="comex-details-link" data-ticker="' + commodity.ticker + '">' + commodity.ticker + '</a></td>';
+        row += '<td>' + (commodity.name || commodity.ticker) + '</td>';
+        row += '<td>$' + (commodity.current_price || 0).toFixed(2) + '</td>';
+        row += '<td>' + (commodity.total_return || 0).toFixed(2) + '%</td>';
+        row += '<td>' + (commodity.return_30d || 0).toFixed(2) + '%</td>';
+        row += '<td>' + (commodity.rsi || 0).toFixed(1) + '</td>';
+        row += '<td>' + (commodity.macd || 0).toFixed(2) + '</td>';
+        row += '<td>' + (commodity.signal || 'NEUTRAL') + '</td>';
+        row += '</tr>';
+        
+        $('#top-comex-table').append(row);
+    });
+    
+    // Add click event for commodity details
+    $('.comex-details-link').click(function(e) {
+        e.preventDefault();
+        var ticker = $(this).data('ticker');
+        loadComexDetails(ticker);
+    });
+}
+
+// Load COMEX commodity details
+function loadComexDetails(ticker) {
+    $.ajax({
+        url: '/api/comex-details/' + ticker,
+        method: 'GET',
+        dataType: 'json',
+        timeout: 30000, // 30 second timeout
+        success: function(data) {
+            displayComexDetails(data);
+        },
+        error: function(xhr, status, error) {
+            console.error('Error loading COMEX details:', status, error);
+            alert('Error loading details for ' + ticker);
+        }
+    });
+}
+
+// Display COMEX commodity details
+function displayComexDetails(data) {
+    // Update COMEX details card
+    $('#comex-details-name').text(data.name);
+    $('#comex-detail-price').text('$' + data.last_price.toFixed(2));
+    $('#comex-detail-change').text(data.change_percent.toFixed(2) + '%');
+    $('#comex-detail-rsi').text(data.indicators.rsi.toFixed(1));
+    $('#comex-detail-macd').text(data.indicators.macd.toFixed(2));
+    $('#comex-detail-sma20').text('$' + data.indicators.sma_20.toFixed(2));
+    $('#comex-detail-sma50').text('$' + data.indicators.sma_50.toFixed(2));
+    
+    // Show the details card
+    $('#comex-details-card').show();
+    
+    // Create commodity detail chart
+    createComexDetailChart(data);
+}
+
 // Create stocks chart for dashboard
 function createStocksChart(data) {
     if (!data || data.length === 0) return;
@@ -920,6 +1047,224 @@ function createHistoryTrendChart(data) {
                 title: {
                     display: true,
                     text: 'Performance Score Trends'
+                }
+            }
+        }
+    });
+}
+
+// Create COMEX chart for dashboard
+function createComexChart(data) {
+    // Prepare data for chart
+    var labels = [];
+    var prices = [];
+    var returns = [];
+    
+    $.each(data, function(i, commodity) {
+        if (i < 5) {  // Only show top 5
+            labels.push(commodity.name || commodity.ticker);
+            prices.push(commodity.current_price || 0);
+            returns.push(commodity.total_return || 0);
+        }
+    });
+    
+    // Create chart
+    var ctx = document.getElementById('comex-performance-chart');
+    if (ctx) {
+        if (charts.comexPerformance) {
+            charts.comexPerformance.destroy();
+        }
+        
+        charts.comexPerformance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Return (%)',
+                    data: returns,
+                    backgroundColor: 'rgba(255, 193, 7, 0.5)',
+                    borderColor: 'rgba(255, 193, 7, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Return (%)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+// Create COMEX performance charts
+function createComexPerformanceCharts(data) {
+    // Prepare data for performance chart
+    var labels = [];
+    var returns = [];
+    var volatility = [];
+    
+    $.each(data, function(i, commodity) {
+        if (i < 5) {  // Only show top 5
+            labels.push(commodity.name || commodity.ticker);
+            returns.push(commodity.total_return || 0);
+            volatility.push(commodity.volatility || 0);
+        }
+    });
+    
+    // Create performance chart
+    var perfCtx = document.getElementById('comex-performance-chart');
+    if (perfCtx) {
+        if (charts.comexPerformance) {
+            charts.comexPerformance.destroy();
+        }
+        
+        charts.comexPerformance = new Chart(perfCtx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Return (%)',
+                    data: returns,
+                    backgroundColor: 'rgba(255, 193, 7, 0.5)',
+                    borderColor: 'rgba(255, 193, 7, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Return (%)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // Create volatility chart
+    var volCtx = document.getElementById('comex-volatility-chart');
+    if (volCtx) {
+        if (charts.comexVolatility) {
+            charts.comexVolatility.destroy();
+        }
+        
+        charts.comexVolatility = new Chart(volCtx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Volatility (%)',
+                    data: volatility,
+                    backgroundColor: 'rgba(220, 53, 69, 0.5)',
+                    borderColor: 'rgba(220, 53, 69, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Volatility (%)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+// Create COMEX detail chart
+function createComexDetailChart(data) {
+    var ctx = document.getElementById('comex-detail-chart');
+    if (!ctx) return;
+    
+    if (charts.comexDetail) {
+        charts.comexDetail.destroy();
+    }
+    
+    // Prepare data
+    var prices = [];
+    var dates = [];
+    var sma20 = [];
+    var sma50 = [];
+    
+    if (data.data && data.data.length > 0) {
+        $.each(data.data, function(i, point) {
+            if (i % 3 === 0) {  // Sample every 3rd point to avoid overcrowding
+                dates.push(new Date(point.Date).toLocaleDateString());
+                prices.push(point.Close);
+                sma20.push(point.sma_short);
+                sma50.push(point.sma_long);
+            }
+        });
+    }
+    
+    // Create chart
+    charts.comexDetail = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [
+                {
+                    label: 'Price',
+                    data: prices,
+                    borderColor: 'rgba(255, 193, 7, 1)',
+                    backgroundColor: 'rgba(255, 193, 7, 0.1)',
+                    borderWidth: 2,
+                    fill: false
+                },
+                {
+                    label: 'SMA 20',
+                    data: sma20,
+                    borderColor: 'rgba(40, 167, 69, 1)',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                },
+                {
+                    label: 'SMA 50',
+                    data: sma50,
+                    borderColor: 'rgba(0, 123, 255, 1)',
+                    borderWidth: 1,
+                    fill: false,
+                    pointRadius: 0
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    display: true,
+                    title: {
+                        display: true,
+                        text: 'Date'
+                    }
+                },
+                y: {
+                    display: true,
+                    title: {
+                        display: true,
+                        text: 'Price ($)'
+                    }
                 }
             }
         }

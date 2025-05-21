@@ -68,6 +68,11 @@ def api_top_forex():
     results = get_analysis_results()
     return jsonify(convert_to_json_safe(results['forex_scored']))
 
+@app.route('/api/top-comex')
+def api_top_comex():
+    results = get_analysis_results()
+    return jsonify(convert_to_json_safe(results['comex_scored']))
+
 @app.route('/api/key-stocks')
 def api_key_stocks():
     return jsonify(get_key_stocks_today())
@@ -107,6 +112,30 @@ def api_stock_details(ticker):
         return jsonify(data)
     else:
         return jsonify({'error': f'Ticker {ticker} not found'}), 404
+
+@app.route('/api/comex-details/<ticker>')
+def api_comex_details(ticker):
+    results = get_analysis_results()
+    
+    if ticker in results['comex_data']:
+        df = results['comex_data'][ticker]
+        # Convert DataFrame to dict for JSON serialization
+        data = {
+            'ticker': ticker,
+            'name': ticker,  # Use a more descriptive name if available
+            'data': df.reset_index().to_dict(orient='records'),
+            'last_price': float(df['Close'].iloc[-1]),
+            'change_percent': float(df['Close'].pct_change().iloc[-1] * 100),
+            'indicators': {
+                'rsi': float(df['rsi'].iloc[-1]),
+                'macd': float(df['macd'].iloc[-1]),
+                'sma_20': float(df['sma_short'].iloc[-1]),
+                'sma_50': float(df['sma_long'].iloc[-1])
+            }
+        }
+        return jsonify(data)
+    else:
+        return jsonify({'error': f'COMEX commodity {ticker} not found'}), 404
 
 # Run the app only when executed directly
 if __name__ == "__main__":
