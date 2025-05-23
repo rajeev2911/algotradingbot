@@ -1415,7 +1415,14 @@ def get_key_stocks_today():
     # Ensure all values are JSON serializable
     def ensure_serializable(data):
         if isinstance(data, pd.DataFrame):
-            return data.to_dict(orient='records')
+            # Make a copy to avoid modifying the original
+            df_copy = data.copy()
+            
+            # Add 'rsi' field for frontend compatibility if 'rsi_short' exists
+            if 'rsi_short' in df_copy.columns and 'rsi' not in df_copy.columns:
+                df_copy['rsi'] = df_copy['rsi_short']
+                
+            return df_copy.to_dict(orient='records')
         elif isinstance(data, pd.Series):
             return data.to_dict()
         elif isinstance(data, (np.int64, np.float64, np.bool_)):

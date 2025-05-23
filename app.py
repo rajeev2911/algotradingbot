@@ -27,6 +27,14 @@ def convert_to_json_safe(df):
     
     # Then ensure all values are JSON serializable
     for record in records:
+        # Add 'rsi' field for frontend compatibility if 'rsi_short' exists but 'rsi' doesn't
+        if 'rsi_short' in record and 'rsi' not in record:
+            record['rsi'] = record['rsi_short']
+            
+        # Add 'return_30d' field for COMEX compatibility if 'recent_30d_return' exists
+        if 'recent_30d_return' in record and 'return_30d' not in record:
+            record['return_30d'] = record['recent_30d_return'] * 100 if record['recent_30d_return'] else 0
+            
         for key, value in list(record.items()):
             # Convert numpy/pandas types to Python native types
             if hasattr(value, 'item'):
