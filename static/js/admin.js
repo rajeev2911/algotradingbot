@@ -280,8 +280,8 @@ function updateTopStocksTable(data) {
             <td>${stock.above_sma50 ? '<span class="text-success">Yes</span>' : '<span class="text-danger">No</span>'}</td>
             <td>${stock.above_sma20 ? '<span class="text-success">Yes</span>' : '<span class="text-danger">No</span>'}</td>
             <td>${(stock.total_score || 0).toFixed(1)}</td>
-            <td><button class="btn btn-sm btn-primary view-stock-details" data-ticker="${stock.ticker}">View</button></td>
-        </tr>`;
+            </tr>`;
+            // <td><button class="btn btn-sm btn-primary view-stock-details" data-ticker="${stock.ticker}">View</button></td>
     });
     
     $('#top-stocks-table').html(html);
