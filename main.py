@@ -308,7 +308,7 @@ def calculate_indicators(df):
     df['macd_histogram'] = df['macd'] - df['macd_signal']
 
     # Calculate returns
-    df['daily_return'] = close_series.pct_change()
+    df['daily_return'] = close_series.pct_change(fill_method=None)
     df['cum_return'] = (1 + df['daily_return']).cumprod() - 1
 
     # Calculate volatility (rolling 30-day)
@@ -400,10 +400,11 @@ def calculate_performance_metrics(df, asset_type='stock'):
 
         # Technical signals - ensure safe boolean evaluation
         try:
+            # Use explicit scalar comparison with .item()
             golden_cross_recent = df['golden_cross'].iloc[-min(30, len(df)):]
             death_cross_recent = df['death_cross'].iloc[-min(30, len(df)):]
 
-            # Use .any() or .sum() > 0 to safely evaluate Series
+            # Now compare scalar values
             metrics['golden_cross_last_30d'] = golden_cross_recent.sum() > 0
             metrics['death_cross_last_30d'] = death_cross_recent.sum() > 0
         except Exception:
@@ -719,7 +720,7 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
         df = calculate_indicators(all_data[ticker])
         
         # Current price
-        current_price = df['Close'].iloc[-1]
+        current_price = df['Close'].iloc[-1].item()
         
         # Signal strength (0-100)
         signal_strength = min(100, max(0, results_df['total_score'].iloc[i]))
@@ -846,10 +847,10 @@ def ema_crossover_with_volume_breakout(df):
     # Calculate signals row by row to avoid Series comparison issues
     for i in range(30, len(result_df)):
         # Safely extract scalar values from Series to avoid ambiguous truth value errors
-        ema_15_current = float(result_df['ema_15'].iloc[i])
-        ema_30_current = float(result_df['ema_30'].iloc[i])
-        ema_15_prev = float(result_df['ema_15'].iloc[i-1])
-        ema_30_prev = float(result_df['ema_30'].iloc[i-1])
+        ema_15_current = result_df['ema_15'].iloc[i].item()
+        ema_30_current = result_df['ema_30'].iloc[i].item()
+        ema_15_prev = result_df['ema_15'].iloc[i-1].item()
+        ema_30_prev = result_df['ema_30'].iloc[i-1].item()
         
         # Check if current row's EMA 15 is above EMA 30
         ema_15_above = ema_15_current > ema_30_current
@@ -861,8 +862,8 @@ def ema_crossover_with_volume_breakout(df):
         prev_ema_15_above = ema_15_prev >= ema_30_prev
         
         # Volume breakout condition (volume > 1.5x average)
-        volume_current = float(result_df['Volume'].iloc[i])
-        avg_volume = float(result_df['avg_volume'].iloc[i])
+        volume_current = result_df['Volume'].iloc[i].item()
+        avg_volume = result_df['avg_volume'].iloc[i].item()
         volume_breakout = volume_current > 1.5 * avg_volume
         
         # Buy signal: EMA 15 crosses above EMA 30 with volume breakout
@@ -923,10 +924,10 @@ def rsi_crossover_with_bollinger_bands(df):
     # Calculate signals row by row to avoid Series comparison issues
     for i in range(30, len(result_df)):
         # Safely extract scalar values from Series to avoid ambiguous truth value errors
-        rsi_10_current = float(result_df['rsi_10'].iloc[i])
-        rsi_20_current = float(result_df['rsi_20'].iloc[i])
-        rsi_10_prev = float(result_df['rsi_10'].iloc[i-1])
-        rsi_20_prev = float(result_df['rsi_20'].iloc[i-1])
+        rsi_10_current = result_df['rsi_10'].iloc[i].item()
+        rsi_20_current = result_df['rsi_20'].iloc[i].item()
+        rsi_10_prev = result_df['rsi_10'].iloc[i-1].item()
+        rsi_20_prev = result_df['rsi_20'].iloc[i-1].item()
         
         # Check if current row's RSI 10 is above RSI 20
         rsi_10_above = rsi_10_current > rsi_20_current
@@ -938,9 +939,9 @@ def rsi_crossover_with_bollinger_bands(df):
         prev_rsi_10_above = rsi_10_prev >= rsi_20_prev
         
         # Bollinger Band conditions
-        price = float(result_df['Close'].iloc[i])
-        bb_upper = float(result_df['bb_upper'].iloc[i])
-        bb_lower = float(result_df['bb_lower'].iloc[i])
+        price = result_df['Close'].iloc[i].item()
+        bb_upper = result_df['bb_upper'].iloc[i].item()
+        bb_lower = result_df['bb_lower'].iloc[i].item()
         
         # Buy signal: RSI 10 crosses above RSI 20 and price is near lower Bollinger Band
         if rsi_10_above and prev_rsi_10_below and price < (bb_lower * 1.02):  # Within 2% of lower band
@@ -984,10 +985,10 @@ def standard_deviation_crossover(df):
     # Calculate signals row by row to avoid Series comparison issues
     for i in range(35, len(result_df)):
         # Safely extract scalar values from Series to avoid ambiguous truth value errors
-        std_ratio_current = float(result_df['std_ratio'].iloc[i])
-        std_ratio_prev = float(result_df['std_ratio'].iloc[i-1])
-        price_current = float(result_df['Close'].iloc[i])
-        price_prev = float(result_df['Close'].iloc[i-5])
+        std_ratio_current = result_df['std_ratio'].iloc[i].item()
+        std_ratio_prev = result_df['std_ratio'].iloc[i-1].item()
+        price_current = result_df['Close'].iloc[i].item()
+        price_prev = result_df['Close'].iloc[i-5].item()
         
         # Check if volatility is increasing (short-term std > long-term std)
         volatility_increasing = std_ratio_current > 1.2  # 20% higher volatility
@@ -1035,10 +1036,10 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
             df = standard_deviation_crossover(df)
             
             # Current price
-            current_price = float(df['Close'].iloc[-1])
+            current_price = df['Close'].iloc[-1].item()
             
             # Signal strength (0-100)
-            signal_strength = min(100, max(0, float(results_df['total_score'].iloc[i])))
+            signal_strength = min(100, max(0, results_df['total_score'].iloc[i]))
             
             # Determine signal type based on indicators
             signal_type = "NEUTRAL"
@@ -1054,20 +1055,20 @@ def generate_trading_signals(all_data, results_df, top_n=5, asset_type=None):
             sell_signals = sum(1 for signal in [ema_signal, rsi_signal, std_signal] if signal == 'SELL')
             
             # RSI conditions
-            rsi = float(df['rsi_short'].iloc[-1])
+            rsi = df['rsi_short'].iloc[-1]
             
             # MACD conditions
-            macd = float(df['macd'].iloc[-1])
-            macd_signal = float(df['macd_signal'].iloc[-1])
-            macd_hist = float(df['macd_histogram'].iloc[-1])
+            macd = df['macd'].iloc[-1]
+            macd_signal = df['macd_signal'].iloc[-1]
+            macd_hist = df['macd_histogram'].iloc[-1]
             
             # Golden/Death cross
-            golden_cross_recent = bool(results_df['golden_cross_last_30d'].iloc[i])
-            death_cross_recent = bool(results_df['death_cross_last_30d'].iloc[i])
+            golden_cross_recent = results_df['golden_cross_last_30d'].iloc[i]
+            death_cross_recent = results_df['death_cross_last_30d'].iloc[i]
             
             # Trend conditions
-            above_sma20 = bool(results_df['above_sma20'].iloc[i])
-            above_sma50 = bool(results_df['above_sma50'].iloc[i])
+            above_sma20 = results_df['above_sma20'].iloc[i]
+            above_sma50 = results_df['above_sma50'].iloc[i]
             
             # Check for bullish signals
             bullish_signals = 0
@@ -1413,7 +1414,7 @@ def get_key_stocks_today():
         }
     
     # Ensure all values are JSON serializable
-    def ensure_serializable(data):
+    def convert_to_json_safe(data):
         if isinstance(data, pd.DataFrame):
             # Make a copy to avoid modifying the original
             df_copy = data.copy()
@@ -1428,9 +1429,9 @@ def get_key_stocks_today():
         elif isinstance(data, (np.int64, np.float64, np.bool_)):
             return data.item()
         elif isinstance(data, list):
-            return [ensure_serializable(item) for item in data]
+            return [convert_to_json_safe(item) for item in data]
         elif isinstance(data, dict):
-            return {k: ensure_serializable(v) for k, v in data.items()}
+            return {k: convert_to_json_safe(v) for k, v in data.items()}
         else:
             return data
     
@@ -1447,9 +1448,9 @@ def get_key_stocks_today():
         
         # Ensure everything is JSON serializable
         return {
-            'top_overall': ensure_serializable(top_overall),
-            'top_momentum': ensure_serializable(top_momentum),
-            'top_value': ensure_serializable(top_value)
+            'top_overall': convert_to_json_safe(top_overall),
+            'top_momentum': convert_to_json_safe(top_momentum),
+            'top_value': convert_to_json_safe(top_value)
         }
     except Exception as e:
         print(f"Error in get_key_stocks_today: {e}")
